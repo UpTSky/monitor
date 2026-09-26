@@ -2,8 +2,8 @@ name: Token GitHub Monitor (Pure YAML - Public Optimized)
 
 on:
   schedule:
-    # 尝试每 30 分钟运行一次（在公共仓库中完全免费，无时长限制！）
-    - cron: '*/30 * * * *'
+    # 尝试每 5 分钟运行一次（在公共仓库中完全免费，无时长限制！）
+    - cron: '*/5 * * * *'
   workflow_dispatch: # 允许手动点击触发
 
 jobs:
@@ -27,22 +27,40 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
-          # 已将您提供的所有代币仓库整合成规范的空格分隔字符串
-          REPOS: "ethereum/go-ethereum solana-labs/solana bitcoin/bitcoin crypto-org-chain/cronos maticnetwork/bor offchainlabs/nitro ethereum-optimism/op-geth bnb-chain/bsc avax-labs/avalanchego aptos-labs/aptos-core monero-project/monero cardano-foundation/cardano-node paritytech/polkadot-sdk cosmos/gaia ton-blockchain/ton mystenlabs/sui"
         run: |
           CACHE_DIR=".commit_cache"
           mkdir -p "$CACHE_DIR"
           ANY_UPDATED="false"
 
-          # 将空格分隔的字符串转换为标准的 Bash 数组进行安全遍历
-          read -r -a REPO_ARRAY <<< "$REPOS"
+          # 彻底修复：采用纯净的多行列表声明，每行一个，确保绝无参数污染
+          mapfile -t REPO_ARRAY << 'EOF'
+          ethereum/go-ethereum
+          solana-labs/solana
+          bitcoin/bitcoin
+          crypto-org-chain/cronos
+          maticnetwork/bor
+          offchainlabs/nitro
+          ethereum-optimism/op-geth
+          bnb-chain/bsc
+          avax-labs/avalanchego
+          aptos-labs/aptos-core
+          monero-project/monero
+          cardano-foundation/cardano-node
+          paritytech/polkadot-sdk
+          cosmos/gaia
+          ton-blockchain/ton
+          mystenlabs/sui
+          EOF
 
           for TARGET_REPO in "${REPO_ARRAY[@]}"; do
+            # 过滤掉空行
+            [ -z "$TARGET_REPO" ] && continue
+            
             echo "----------------------------------------"
             echo "正在检查仓库: $TARGET_REPO"
             
-            # 1. 获取最新一条 commit 数据（修复了参数识别问题）
-            COMMIT_DATA=$(gh api "repos/$TARGET_REPO/commits" --jq '. | {sha: .sha, author: .commit.author.name, message: .commit.message, url: .html_url}' 2>/dev/null)
+            # 1. 获取最新一条 commit 数据（严格限制参数隔离）
+            COMMIT_DATA=$(gh api "repos/${TARGET_REPO}/commits" --jq '. | {sha: .sha, author: .commit.author.name, message: .commit.message, url: .html_url}' 2>/dev/null)
             
             if [ -z "$COMMIT_DATA" ] || [ "$COMMIT_DATA" = "null" ]; then
               echo "警告: 无法获取 $TARGET_REPO 的数据，跳过。"
