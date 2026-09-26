@@ -1,5 +1,5 @@
 yaml
-name: MultiRepoCommitMonitor
+name: Multi-Repo Commit Monitor
 
 on:
   push:
@@ -69,6 +69,7 @@ jobs:
             echo "NEW_COMMIT=true" >> \$GITHUB_ENV
             echo "SHA" > "CACHE_FILE"
             
+            # Formulating Telegram message text
             TEXT="⚠️ *New Commit to REPO:BRANCH* %0A%0A*SHA:* \`$SHORT_SHA\`%0A*Author:* \$AUTHOR%0A*Message:*%0A\(MESSAGE\%0A\%0A[View on GitHub](\)URL)"
             TEXT=(echo "TEXT" | sed 's/"/\\"/g')
             echo "MSG_TEXT=TEXT" >> GITHUB_ENV
@@ -84,7 +85,7 @@ jobs:
           
           git pull origin main --rebase || true
           git add .last_sha_*
-          git commit -m "Update cache for  matrix.repo :{{ matrix.branch }} [skip ci]" || exit 0
+          git commit -m "Update cache for  matrix.repo :{{{ matrix.branch }}} [skip ci]" || exit 0
           
           for i in {1..5}; do
             git push origin HEAD:main && break || {
