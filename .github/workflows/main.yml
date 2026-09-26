@@ -1,10 +1,14 @@
-yaml
-name: Multi-Repo Monitor
-on: [push, workflow_dispatch]
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger
-        run: |
-          curl -X POST "https://telegram.org{{ secrets.TELEGRAM_TOKEN }}/sendMessage" -d "chat_id=${{ secrets.TELEGRAM_TO }}" -d "text=🚀 Monitor System Activated!"
+name: Monitor               # 第1行：必须全小写 name
+on:                         # 第2行：必须全小写 on
+  push:                     # 第3行：前面空2个空格，必须全小写 push
+    branches: [main]        # 第4行：前面空4个空格，必须全小写 branches
+  workflow_dispatch:        # 第5行：前面空2个空格，必须全小写
+jobs:                       # 第6行：必须顶格，全小写 jobs
+  check:                    # 第7行：前面空2个空格
+    runs-on: ubuntu-latest  # 第8行：前面空4个空格，runs-on 全小写
+    steps:                  # 第9行：前面空4个空格，steps 全小写
+      - name: Send          # 第10行：前面空6个空格，短横线后空1格
+        run: |              # 第11行：前面空8个空格，run后面有一个冒号和一个竖线
+          curl -s -X POST "https://telegram.org{{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+          -d "chat_id=${{ secrets.TELEGRAM_TO }}" \
+          -d "text=🚀 Mobile Test Success! Bitcoin: master"
