@@ -2,8 +2,8 @@ name: Token GitHub Monitor (Pure YAML - Public Optimized)
 
 on:
   schedule:
-    # 尝试每 5 分钟运行一次（在公共仓库中完全免费，无时长限制！）
-    - cron: '*/5 * * * *'
+    # 尝试每 30 分钟运行一次（在公共仓库中完全免费，无时长限制！）
+    - cron: '*/30 * * * *'
   workflow_dispatch: # 允许手动点击触发
 
 jobs:
@@ -92,7 +92,7 @@ jobs:
               URL=$(echo "$COMMIT_DATA" | jq -r '.url')
               FULL_MESSAGE=$(echo "$COMMIT_DATA" | jq -r '.message' | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
 
-              # 6. 组装并发送 Telegram 通知（已修复 API 终点和格式）
+              # 6. 组装并发送 Telegram 通知（EOF 闭合标签已彻底移动到绝对顶格，解决第97行语法阻断）
               TEXT=$(cat <<EOF
 🔔 <b>代币代码变动监控</b>
 
@@ -103,20 +103,16 @@ jobs:
 📝 <b>完整变动内容:</b>
 <code>$FULL_MESSAGE</code>
 EOF
-              )
+)
 
-              # 核心修正：补全了 /bot 路径的电报标准网关地址
-              curl -s -X POST "https://api.telegram.org/bot\${TELEGRAM_BOT_TOKEN}/sendMessage" \
-                -d "chat_id=\${TELEGRAM_CHAT_ID}" \
-                -d "parse_mode=HTML" \
-                --data-urlencode "text=\${TEXT}" > /dev/null
+              curl -s -X POST "https://api.telegram.org/bot\${TELEGRAM_BOT_TOKEN}/sendMessage"                 -d "chat_id=\${TELEGRAM_CHAT_ID}"                 -d "parse_mode=HTML"                 --data-urlencode "text=\${TEXT}" > /dev/null
               
               echo "$TARGET_REPO 通知已成功发送到 Telegram。"
             fi
           done
 
           # 将是否有更新的状态传递给下一步
-          echo "any_updated=$ANY_UPDATED" >> $GITHUB_OUTPUT
+          echo "any_updated=\$ANY_UPDATED" >> \$GITHUB_OUTPUT
         id: monitor_step
 
       # 只有在任何一个代币有新更新时，才更新全局缓存
