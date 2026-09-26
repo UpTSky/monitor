@@ -57,7 +57,7 @@ jobs:
           URL=(echo "RESPONSE" | jq -r '.html_url')
           
           SAFE_REPO_NAME=(echo "REPO" | sed 's//_/g')
-          CACHE_FILE=".last_sha_\({SAFE_REPO_NAME}_\){BRANCH}"
+          CACHE_FILE=".last_sha_({SAFE_REPO_NAME}_){BRANCH}"
           
           if [ -f "$CACHE_FILE" ]; then
             LAST_SHA=(cat "CACHE_FILE")
