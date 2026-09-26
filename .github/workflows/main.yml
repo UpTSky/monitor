@@ -1,0 +1,98 @@
+yaml
+name: Multi-Repo Commit Monitor
+
+on:
+  schedule:
+    # 每 5 分钟自动运行一次
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # 允许你手动点击按钮触发测试
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    
+    # === 在这里配置你想监控的所有项目和分支 ===
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repo: "bitcoin/bitcoin"
+            branch: "master"
+          - repo: "ethereum/go-ethereum"
+            branch: "main"
+          - repo: "lightningnetwork/lnd"
+            branch: "master"
+          - repo: "cosmos/cosmos-sdk"
+            branch: "main"
+    # ==========================================
+
+    steps:
+      - name: Checkout local repository
+        uses: actions/checkout@v4
+
+      - name: Fetch and Compare Commit
+        id: check
+        run: |
+          REPO="\${{ matrix.repo }}"
+          BRANCH="\${{ matrix.branch }}"
+          
+          echo "Checking REPO on branch BRANCH..."
+          
+          # 1. 调用 GitHub API 获取最新 commit
+          RESPONSE=\$(curl -s "https://github.com{BRANCH}")
+          
+          # 检查 API 是否请求成功
+          SHA=(echo "RESPONSE" | jq -r '.sha' 2>/dev/null)
+          if [ "\(SHA" = "null" ] \vert{}\vert{} [ -z "\)SHA" ]; then
+            echo "Failed to fetch data for REPO (Branch: BRANCH). Skipping..."
+            echo "NEW_COMMIT=false" >> \$GITHUB_ENV
+            exit 0
+          fi
+          
+          SHORT_SHA=(echo "SHA" | cut -c1-7)
+          AUTHOR=(echo "RESPONSE" | jq -r '.commit.author.name')
+          MESSAGE=(echo "RESPONSE" | jq -r '.commit.message' | head -n 5)
+          URL=(echo "RESPONSE" | jq -r '.html_url')
+          
+          # 2. 为每个仓库+分支组合创建唯一的本地缓存文件名
+          # 将 / 替换为 _ 避免路径错误
+          SAFE_REPO_NAME=(echo "REPO" | sed 's/\//_/g')
+          CACHE_FILE=".last_sha_\({SAFE_REPO_NAME}_\){BRANCH}"
+          
+          if [ -f "\$CACHE_FILE" ]; then
+            LAST_SHA=(cat "CACHE_FILE")
+          else
+            LAST_SHA=""
+          fi
+          
+          # 3. 比对 SHA
+          if [ "SHA" != "LAST_SHA" ]; then
+            echo "NEW_COMMIT=true" >> \$GITHUB_ENV
+            echo "SHA" > "CACHE_FILE"
+            
+            # 转义消息，防止特殊字符或引号打断脚本
+            TEXT="⚠️ *New Commit to REPO:{BRANCH}* %0A%0A*SHA:* \`${SHORT_SHA}\`%0A*Author:* \${AUTHOR}%0A*Message:*%0A\({MESSAGE}\%0A\%0A[View on GitHub](\){URL})"
+            TEXT=(echo "TEXT" | sed 's/"/\\"/g')
+            echo "MSG_TEXT=TEXT" >> GITHUB_ENV
+          else
+            echo "NEW_COMMIT=false" >> \$GITHUB_ENV
+          fi
+
+      - name: Save Cache to Repo
+        if: env.NEW_COMMIT == 'true'
+        run: |
+          # 必须先拉取最新代码，防止多线程并行推回代码时冲突
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git pull origin main --rebase || true
+          git add .last_sha_*
+          git commit -m "Update cache for  matrix.repo :{{ matrix.branch }} [skip ci]" || exit 0
+          git push origin HEAD:main
+
+      - name: Push to Telegram
+        if: env.NEW_COMMIT == 'true'
+        run: |
+          curl -s -X POST "https://telegram.org\${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+            -d "chat_id=\${{ secrets.TELEGRAM_TO }}" \
+            -d "text=\${{ env.MSG_TEXT }}" \
+            -d "parse_mode=Markdown"
