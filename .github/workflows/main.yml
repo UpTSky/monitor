@@ -1,4 +1,5 @@
-yamlname: Multi-Repo Commit Monitor
+yaml
+name: Multi-Repo Commit Monitor
 
 on:
   push:
