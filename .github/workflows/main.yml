@@ -1,102 +1,80 @@
-name: Token GitHub Monitor (Pure YAML)
+name: Token GitHub Monitor (Pure YAML - Public Optimized)
 
 on:
   schedule:
-    # 尝试每 5 分钟运行一次（实际受 GitHub 调度影响可能存在延迟）
+    # 尝试每 30 分钟运行一次（在公共仓库中完全免费，无时长限制！）
     - cron: '*/30 * * * *'
-  workflow_dispatch: # 允许手动触发测试
+  workflow_dispatch: # 允许手动点击触发
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        repo: [
-          "ethereum/go-ethereum solana-labs/solana bitcoin/bitcoin crypto-org-chain/cronos maticnetwork/bor offchainlabs/nitro ethereum-optimism/op-geth bnb-chain/bsc"
-        ]
-
     steps:
-      - name: Checkout Code (Required for Cache)
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Fetch Latest Commit and Filter
-        id: check_commit
-        env:
-          TARGET_REPO: ${{ matrix.repo }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
-        run: |
-          echo "正在检查仓库: $TARGET_REPO"
-          
-          # 1. 获取最新 commit 数据
-          COMMIT_DATA=$(gh api repos/$TARGET_REPO/commits --jq '.[0] | {sha: .sha, author: .commit.author.name, message: .commit.message, url: .html_url}')
-          
-          if [ -z "$COMMIT_DATA" ] || [ "$COMMIT_DATA" = "null" ]; then
-            echo "错误: 无法获取 $TARGET_REPO 的数据"
-            exit 1
-          fi
-
-          SHA=$(echo "$COMMIT_DATA" | jq -r '.sha')
-          echo "最新 SHA: $SHA"
-
-          # 2. 读取上一次保存的 SHA（通过一个临时文件）
-          # 将仓库名中的斜杠替换为下划线作为文件名
-          REPO_FILE=$(echo "$TARGET_REPO" | tr '/' '_')
-          CACHE_DIR=".commit_cache"
-          mkdir -p "$CACHE_DIR"
-          
-          if [ -f "$CACHE_DIR/$REPO_FILE" ]; then
-            LAST_SHA=$(cat "$CACHE_DIR/$REPO_FILE")
-          else
-            LAST_SHA=""
-          fi
-
-          # 3. 比对 SHA，如果相同则跳过发送
-          if [ "$SHA" = "$LAST_SHA" ]; then
-            echo "代码未变动，跳过通知。"
-            echo "is_updated=false" >> $GITHUB_OUTPUT
-          else
-            echo "检测到新提交！"
-            echo "$SHA" > "$CACHE_DIR/$REPO_FILE"
-            echo "is_updated=true" >> $GITHUB_OUTPUT
-            
-            # 提取字段并保存到环境变量供下一步使用
-            SHORT_SHA=${SHA:0:7}
-            AUTHOR=$(echo "$COMMIT_DATA" | jq -r '.author')
-            URL=$(echo "$COMMIT_DATA" | jq -r '.url')
-            
-            # 提取完整内容，并对 HTML 特殊字符进行安全转义，防止破坏 HTML 标签
-            FULL_MESSAGE=$(echo "$COMMIT_DATA" | jq -r '.message' | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
-
-            # 导出多行变量的安全写法
-            echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_ENV
-            echo "AUTHOR=$AUTHOR" >> $GITHUB_ENV
-            echo "URL=$URL" >> $GITHUB_ENV
-            
-            echo "FULL_MESSAGE<<EOF" >> $GITHUB_ENV
-            echo "$FULL_MESSAGE" >> $GITHUB_ENV
-            echo "EOF" >> $GITHUB_ENV
-          fi
-          
-      # 使用 GitHub Actions 缓存来持久化保存上一次的 SHA 文件
-      - name: Cache Commit SHA
-        if: steps.check_commit.outputs.is_updated == 'true'
-        uses: actions/cache/save@v4
+      # 读取并恢复上一次的 Commit SHA 缓存文件
+      - name: Restore Commit Cache
+        uses: actions/cache/restore@v4
         with:
           path: .commit_cache
-          # 使用时间戳确保每次有更新时都能成功写入新缓存
-          key: commit-cache-${{ matrix.repo }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: commit-cache-all-${{ github.run_id }}
+          restore-keys: |
+            commit-cache-all-
 
-      # 仅在有新提交更新时，才发送 Telegram 通知
-      - name: Send to Telegram
-        if: steps.check_commit.outputs.is_updated == 'true'
+      - name: Monitor Repos and Send Telegram
         env:
-          TARGET_REPO: ${{ matrix.repo }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          # 已将您提供的所有代币仓库整合成规范的空格分隔字符串
+          REPOS: "ethereum/go-ethereum solana-labs/solana bitcoin/bitcoin crypto-org-chain/cronos maticnetwork/bor offchainlabs/nitro ethereum-optimism/op-geth bnb-chain/bsc avax-labs/avalanchego aptos-labs/aptos-core monero-project/monero cardano-foundation/cardano-node paritytech/polkadot-sdk cosmos/gaia ton-blockchain/ton mystenlabs/sui"
         run: |
-          # 组装 Telegram HTML 消息（包含全部完整内容）
-          TEXT=$(cat <<EOF
+          CACHE_DIR=".commit_cache"
+          mkdir -p "$CACHE_DIR"
+          ANY_UPDATED="false"
+
+          # 将空格分隔的字符串转换为标准的 Bash 数组进行安全遍历
+          read -r -a REPO_ARRAY <<< "$REPOS"
+
+          for TARGET_REPO in "${REPO_ARRAY[@]}"; do
+            echo "----------------------------------------"
+            echo "正在检查仓库: $TARGET_REPO"
+            
+            # 1. 获取最新一条 commit 数据（修复了参数识别问题）
+            COMMIT_DATA=$(gh api "repos/$TARGET_REPO/commits" --jq '. | {sha: .sha, author: .commit.author.name, message: .commit.message, url: .html_url}' 2>/dev/null)
+            
+            if [ -z "$COMMIT_DATA" ] || [ "$COMMIT_DATA" = "null" ]; then
+              echo "警告: 无法获取 $TARGET_REPO 的数据，跳过。"
+              continue
+            fi
+
+            SHA=$(echo "$COMMIT_DATA" | jq -r '.sha')
+            SHORT_SHA=${SHA:0:7}
+            REPO_FILE=$(echo "$TARGET_REPO" | tr '/' '_')
+
+            # 2. 读取缓存的比对 SHA
+            if [ -f "$CACHE_DIR/$REPO_FILE" ]; then
+              LAST_SHA=$(cat "$CACHE_DIR/$REPO_FILE")
+            else
+              LAST_SHA=""
+            fi
+
+            # 3. 比对结果
+            if [ "$SHA" = "$LAST_SHA" ]; then
+              echo "$TARGET_REPO 代码未变动，跳过通知。"
+            else
+              echo "🚀 $TARGET_REPO 检测到新提交！"
+              echo "$SHA" > "$CACHE_DIR/$REPO_FILE"
+              ANY_UPDATED="true"
+
+              # 4. 提取字段并对 HTML 特殊字符进行安全转义，防止破坏 TG 格式
+              AUTHOR=$(echo "$COMMIT_DATA" | jq -r '.author')
+              URL=$(echo "$COMMIT_DATA" | jq -r '.url')
+              FULL_MESSAGE=$(echo "$COMMIT_DATA" | jq -r '.message' | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+
+              # 5. 组装并直接发送该代币的独立 Telegram 通知
+              TEXT=$(cat <<EOF
           🔔 <b>代币代码变动监控</b>
 
           📦 <b>仓库:</b> <code>$TARGET_REPO</code>
@@ -106,12 +84,25 @@ jobs:
           📝 <b>完整变动内容:</b>
           <code>$FULL_MESSAGE</code>
           EOF
-          )
+              )
 
-          # 发送消息
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${TELEGRAM_CHAT_ID}" \
-            -d "parse_mode=HTML" \
-            --data-urlencode "text=${TEXT}" > /dev/null
-          
-          echo "通知已发送。"
+              curl -s -X POST "https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage" \
+                -d "chat_id=${TELEGRAM_CHAT_ID}" \
+                -d "parse_mode=HTML" \
+                --data-urlencode "text=${TEXT}" > /dev/null
+              
+              echo "$TARGET_REPO 通知已成功发送到 Telegram。"
+            fi
+          done
+
+          # 将是否有更新的状态传递给下一步，用以决定是否重写缓存
+          echo "any_updated=$ANY_UPDATED" >> $GITHUB_OUTPUT
+        id: monitor_step
+
+      # 只有在任何一个代币有新更新时，才更新全局缓存，防止无意义的写操作
+      - name: Save Commit Cache
+        if: steps.monitor_step.outputs.any_updated == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .commit_cache
+          key: commit-cache-all-${{ github.run_id }}-${{ github.run_attempt }}
