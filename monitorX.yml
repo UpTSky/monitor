@@ -1,0 +1,10 @@
+yaml
+name: Multi-Repo Monitor
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger
+        run: |
+          curl -X POST "https://telegram.org{{ secrets.TELEGRAM_TOKEN }}/sendMessage" -d "chat_id=${{ secrets.TELEGRAM_TO }}" -d "text=🚀 Monitor System Activated!"
