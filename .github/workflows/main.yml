@@ -3,7 +3,7 @@ name: Token GitHub Monitor (Pure YAML)
 on:
   schedule:
     # 尝试每 5 分钟运行一次（实际受 GitHub 调度影响可能存在延迟）
-    - cron: '*/5 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch: # 允许手动触发测试
 
 jobs:
@@ -13,9 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         repo: [
-          "ethereum/go-ethereum",
-          "solana-labs/solana",
-          "bitcoin/bitcoin"
+          "ethereum/go-ethereum solana-labs/solana bitcoin/bitcoin crypto-org-chain/cronos maticnetwork/bor offchainlabs/nitro ethereum-optimism/op-geth bnb-chain/bsc"
         ]
 
     steps:
