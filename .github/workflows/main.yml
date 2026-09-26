@@ -30,24 +30,23 @@ jobs:
         run: |
           echo "正在检查仓库: \$TARGET_REPO"
           
-          # 1. 使用 GitHub 官方 CLI 工具获取最新一条 commit 的数据 (包含 sha, 作者, 消息, 链接)
+          # 1. 使用 GitHub 官方 CLI 工具获取最新一条 commit 的数据
           COMMIT_DATA=\$(gh api repos/\$TARGET_REPO/commits --jq '.[0] | {sha: .sha, author: .commit.author.name, message: .commit.message, url: .html_url}')
           
           # 如果获取失败则退出
-          if [ -z "\$COMMIT_DATA" ]; then
+          if [ -z "\(COMMIT_DATA" ] \vert{}\vert{} [ "\)COMMIT_DATA" = "null" ]; then
             echo "错误: 无法获取 \$TARGET_REPO 的数据"
             exit 1
           fi
 
-          # 2. 从 JSON 中提取具体字段
+          # 2. 从 JSON 中提取具体字段 (修复了之前的赋值错误)
           SHA=(echo "COMMIT_DATA" | jq -r '.sha | .[0:7]')
           AUTHOR=(echo "COMMIT_DATA" | jq -r '.author')
-          # 只提取 Commit 消息的第一行，防止文本过长导致 Telegram 报错
+          # 只提取 Commit 消息的第一行，防止文本过长或包含换行导致消息断开
           MESSAGE=(echo "COMMIT_DATA" | jq -r '.message' | head -n 1)
           URL=(echo "COMMIT_DATA" | jq -r '.url')
 
           # 3. 组装 Telegram Markdown 消息
-          # 注意：为了防止特殊字符破坏 Markdown 格式，用反引号包裹
           TEXT=\$(cat <<EOF
           🔔 *代币代码变动监控*
 
@@ -59,9 +58,9 @@ jobs:
           )
 
           # 4. 使用 curl 直接发送到 Telegram
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+          curl -s -X POST "https://api.telegram.org/bot\${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d "chat_id=\${TELEGRAM_CHAT_ID}" \
             -d "parse_mode=Markdown" \
-            -d "text=\${TEXT}" > /dev/null
+            --data-urlencode "text=\${TEXT}" > /dev/null
           
           echo "仓库 \$TARGET_REPO 检查完毕，通知已发送。"
