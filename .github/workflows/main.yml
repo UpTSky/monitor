@@ -9,6 +9,6 @@ jobs:                       # 第6行：必须顶格，全小写 jobs
     steps:                  # 第9行：前面空4个空格，steps 全小写
       - name: Send          # 第10行：前面空6个空格，短横线后空1格
         run: |              # 第11行：前面空8个空格，run后面有一个冒号和一个竖线
-          curl -s -X POST "https://api.telegram.org{{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
           -d "chat_id=${{ secrets.TELEGRAM_TO }}" \
           -d "text=🚀 Mobile Test Success! Bitcoin: master"
