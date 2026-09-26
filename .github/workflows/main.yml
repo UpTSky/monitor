@@ -1,37 +1,67 @@
-name: Multi-Repo Monitor
+name: Token GitHub Monitor (Pure YAML)
+
 on:
   schedule:
-    - cron: '*/5 * * * *'
-  workflow_dispatch: 
+    # 每小时运行一次（GitHub 定时任务可能有延迟）
+    - cron: '0 * * * *'
+  workflow_dispatch: # 允许在 GitHub 网页上手动点击按钮立即触发测试！
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
+      fail-fast: false # 即使某个仓库查不到，也不影响其他仓库的监控
       matrix:
-        include:
-          - repo: "bitcoin/bitcoin"
-            branch: "master"
-          - repo: "ethereum/go-ethereum"
-            branch: "main"
-          - repo: "lightningnetwork/lnd"
-            branch: "master"
-          - repo: "cosmos/cosmos-sdk"
-            branch: "main"
+        # 在这里配置你想监控的代币 GitHub 仓库 (格式: 所有者/仓库名)
+        repo: [
+          "ethereum/go-ethereum",
+          "solana-labs/solana",
+          "bitcoin/bitcoin"
+        ]
 
     steps:
-      - name: Fetch and Send
+      - name: Fetch Latest Commit and Send to Telegram
+        env:
+          TARGET_REPO: \${{ matrix.repo }}
+          TELEGRAM_BOT_TOKEN: \${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: \${{ secrets.TELEGRAM_CHAT_ID }}
+          # 使用 GitHub 自动生成的 Token，防止 API 被限流
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }} 
         run: |
-          RESPONSE=\$(curl -s "https://github.com matrix.repo /commits/{{ matrix.branch }}")
-          SHA=(echo "RESPONSE" | jq -r '.sha' | cut -c1-7)
-          AUTHOR=(echo "RESPONSE" | jq -r '.commit.author.name')
-          MESSAGE=(echo "RESPONSE" | jq -r '.commit.message' | head -n 3)
-          URL=(echo "RESPONSE" | jq -r '.html_url')
+          echo "正在检查仓库: \$TARGET_REPO"
           
-          TEXT="⚠️ *New Commit to  matrix.repo :{{ matrix.branch }}*%0A%0A*SHA:* \`$SHA\`%0A*Author:* \$AUTHOR%0A*Message:*%0A\(MESSAGE\%0A\%0A[View on GitHub](\)URL)"
+          # 1. 使用 GitHub 官方 CLI 工具获取最新一条 commit 的数据 (包含 sha, 作者, 消息, 链接)
+          COMMIT_DATA=\$(gh api repos/\$TARGET_REPO/commits --jq '.[0] | {sha: .sha, author: .commit.author.name, message: .commit.message, url: .html_url}')
           
-          curl -s -X POST "https://telegram.org\${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
-            -d "chat_id=\${{ secrets.TELEGRAM_TO }}" \
-            -d "text=\$TEXT" \
-            -d "parse_mode=Markdown"
+          # 如果获取失败则退出
+          if [ -z "\$COMMIT_DATA" ]; then
+            echo "错误: 无法获取 \$TARGET_REPO 的数据"
+            exit 1
+          fi
+
+          # 2. 从 JSON 中提取具体字段
+          SHA=(echo "COMMIT_DATA" | jq -r '.sha | .[0:7]')
+          AUTHOR=(echo "COMMIT_DATA" | jq -r '.author')
+          # 只提取 Commit 消息的第一行，防止文本过长导致 Telegram 报错
+          MESSAGE=(echo "COMMIT_DATA" | jq -r '.message' | head -n 1)
+          URL=(echo "COMMIT_DATA" | jq -r '.url')
+
+          # 3. 组装 Telegram Markdown 消息
+          # 注意：为了防止特殊字符破坏 Markdown 格式，用反引号包裹
+          TEXT=\$(cat <<EOF
+          🔔 *代币代码变动监控*
+
+          📦 *仓库:* \`$TARGET_REPO\`
+          👤 *提交者:* \`$AUTHOR\`
+          📝 *摘要:* \`$MESSAGE\`
+          🔗 *详情:* [查看 Commit](\$URL)
+          EOF
+          )
+
+          # 4. 使用 curl 直接发送到 Telegram
+          curl -s -X POST "https://telegram.org\${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=\${TELEGRAM_CHAT_ID}" \
+            -d "parse_mode=Markdown" \
+            -d "text=\${TEXT}" > /dev/null
+          
+          echo "仓库 \$TARGET_REPO 检查完毕，通知已发送。"
