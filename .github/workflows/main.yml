@@ -22,45 +22,42 @@ jobs:
     steps:
       - name: Fetch Latest Commit and Send to Telegram
         env:
-          TARGET_REPO: \${{ matrix.repo }}
-          TELEGRAM_BOT_TOKEN: \${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: \${{ secrets.TELEGRAM_CHAT_ID }}
+          TARGET_REPO: ${{ matrix.repo }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           # 使用 GitHub 自动生成的 Token，防止 API 被限流
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }} 
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
         run: |
-          echo "正在检查仓库: \$TARGET_REPO"
+          echo "正在检查仓库: $TARGET_REPO"
           
           # 1. 使用 GitHub 官方 CLI 工具获取最新一条 commit 的数据
-          COMMIT_DATA=\$(gh api repos/\$TARGET_REPO/commits --jq '.[0] | {sha: .sha, author: .commit.author.name, message: .commit.message, url: .html_url}')
+          COMMIT_DATA=$(gh api repos/$TARGET_REPO/commits --jq '.[0] | {sha: .sha, author: .commit.author.name, message: .commit.message, url: .html_url}')
           
           # 如果获取失败则退出
-          if [ -z "\(COMMIT_DATA" ] \vert{}\vert{} [ "\)COMMIT_DATA" = "null" ]; then
-            echo "错误: 无法获取 \$TARGET_REPO 的数据"
+          if [ -z "$COMMIT_DATA" ] || [ "$COMMIT_DATA" = "null" ]; then
+            echo "错误: 无法获取 $TARGET_REPO 的数据"
             exit 1
           fi
 
-          # 2. 从 JSON 中提取具体字段 (修复了之前的赋值错误)
-          SHA=(echo "COMMIT_DATA" | jq -r '.sha | .[0:7]')
-          AUTHOR=(echo "COMMIT_DATA" | jq -r '.author')
+          # 2. 从 JSON 中提取具体字段
+          SHA=$(echo "$COMMIT_DATA" | jq -r '.sha | .[0:7]')
+          AUTHOR=$(echo "$COMMIT_DATA" | jq -r '.author')
           # 只提取 Commit 消息的第一行，防止文本过长或包含换行导致消息断开
-          MESSAGE=(echo "COMMIT_DATA" | jq -r '.message' | head -n 1)
-          URL=(echo "COMMIT_DATA" | jq -r '.url')
+          MESSAGE=$(echo "$COMMIT_DATA" | jq -r '.message' | head -n 1)
+          URL=$(echo "$COMMIT_DATA" | jq -r '.url')
 
-          # 3. 组装 Telegram Markdown 消息
-          TEXT=\$(cat <<EOF
-          🔔 *代币代码变动监控*
+          # 3. 组装 Telegram HTML 消息（改用 HTML 模式，比 Markdown 兼容性更好，更不容易因为特殊字符报错）
+          TEXT=$(cat <<EOF
+          🔔 <b>代币代码变动监控</b>
 
-          📦 *仓库:* \`$TARGET_REPO\`
-          👤 *提交者:* \`$AUTHOR\`
-          📝 *摘要:* \`$MESSAGE\`
-          🔗 *详情:* [查看 Commit](\$URL)
+          📦 <b>仓库:</b> <code>$TARGET_REPO</code>
+          👤 <b>提交者:</b> <code>$AUTHOR</code>
+          📝 <b>摘要:</b> <code>$MESSAGE</code>
+          🔗 <b>详情:</b> <a href="$URL">查看 Commit</a>
           EOF
           )
 
-          # 4. 使用 curl 直接发送到 Telegram
-          curl -s -X POST "https://api.telegram.org/bot\${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d "chat_id=\${TELEGRAM_CHAT_ID}" \
-            -d "parse_mode=Markdown" \
-            --data-urlencode "text=\${TEXT}" > /dev/null
+          # 4. 使用 curl 直接发送到 Telegram (使用 --data-urlencode 防止内容带有特殊字符或空格导致无法识别)
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"             -d "chat_id=${TELEGRAM_CHAT_ID}"             -d "parse_mode=HTML"             --data-urlencode "text=${TEXT}" > /dev/null
           
-          echo "仓库 \$TARGET_REPO 检查完毕，通知已发送。"
+          echo "仓库 $TARGET_REPO 检查完毕，通知已发送。"
