@@ -1,15 +1,16 @@
-yaml
-name: Multi-Repo Commit Monitor
+yamlname: Multi-Repo Commit Monitor
 
 on:
+  push:
+    branches:
+      - main
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch: 
 
-# === 核心修复 1：增加全局并发控制，避免多线程同时 push 冲突 ===
 concurrency:
   group: monitor-push-group
-  cancel-in-progress: false # 必须设为 false，让它们排队，不能互相取消
+  cancel-in-progress: false
 
 jobs:
   monitor:
