@@ -1,5 +1,6 @@
 yaml
-name: Multi-Repo Commit Monitor
+name: Multi-RepoCommitMonitor
+
 on:
   push:
     branches:
