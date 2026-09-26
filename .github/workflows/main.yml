@@ -1,4 +1,5 @@
-yamlname: Deploy Workflow
+yaml
+name: Deploy Workflow
 on:
   push:
     branches:
