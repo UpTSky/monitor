@@ -97,12 +97,17 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # 组装 Telegram HTML 消息（包含全部完整内容）
+          # 1. 强制将虚拟机时区设置为北京时间，并获取当前抓取时间
+          sudo timedatectl set-timezone Asia/Shanghai
+          NOTIFY_TIME=$(date "+%Y-%m-%d %H:%M:%S")
+
+          # 2. 组装 Telegram HTML 消息（在里面加入通知时间）
           TEXT=$(cat <<EOF
           🔔 <b>代币代码变动监控</b>
 
           📦 <b>仓库:</b> <code>$TARGET_REPO</code>
           👤 <b>提交者:</b> <code>$AUTHOR</code>
+          ⏰ <b>通知时间(北京):</b> <code>$NOTIFY_TIME</code>
           🔗 <b>详情:</b> <a href="$URL">查看 Commit ($SHORT_SHA)</a>
 
           📝 <b>完整变动内容:</b>
