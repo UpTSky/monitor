@@ -30,8 +30,8 @@ jobs:
         run: |
           echo "正在检查仓库: $TARGET_REPO"
           
-          # 1. 获取最新 commit 数据
-          COMMIT_DATA=$(gh api repos/$TARGET_REPO/commits --jq '.[0] | {sha: .sha, author: .commit.author.name, message: .commit.message, url: .html_url}')
+          # 1. 获取最新 commit 数据（加入 merge_date 获取合并时间戳）
+          COMMIT_DATA=$(gh api repos/$TARGET_REPO/commits --jq '.[0] | {sha: .sha, author: .commit.author.name, message: .commit.message, url: .html_url, merge_date: .commit.committer.date}')
           
           if [ -z "$COMMIT_DATA" ] || [ "$COMMIT_DATA" = "null" ]; then
             echo "错误: 无法获取 $TARGET_REPO 的数据"
@@ -41,8 +41,7 @@ jobs:
           SHA=$(echo "$COMMIT_DATA" | jq -r '.sha')
           echo "最新 SHA: $SHA"
 
-          # 2. 读取上一次保存的 SHA（通过一个临时文件）
-          # 将仓库名中的斜杠替换为下划线作为文件名
+          # 2. 读取上一次保存的 SHA
           REPO_FILE=$(echo "$TARGET_REPO" | tr '/' '_')
           CACHE_DIR=".commit_cache"
           mkdir -p "$CACHE_DIR"
@@ -53,7 +52,7 @@ jobs:
             LAST_SHA=""
           fi
 
-          # 3. 比对 SHA，如果相同则跳过发送
+          # 3. 比对 SHA
           if [ "$SHA" = "$LAST_SHA" ]; then
             echo "代码未变动，跳过通知。"
             echo "is_updated=false" >> $GITHUB_OUTPUT
@@ -62,31 +61,32 @@ jobs:
             echo "$SHA" > "$CACHE_DIR/$REPO_FILE"
             echo "is_updated=true" >> $GITHUB_OUTPUT
             
-            # 提取字段并保存到环境变量供下一步使用
             SHORT_SHA=${SHA:0:7}
             AUTHOR=$(echo "$COMMIT_DATA" | jq -r '.author')
             URL=$(echo "$COMMIT_DATA" | jq -r '.url')
             
-            # 提取完整内容，并对 HTML 特殊字符进行安全转义，防止破坏 HTML 标签
+            # 提取合并时间并将其转换为北京时间
+            UTC_MERGE_TIME=$(echo "$COMMIT_DATA" | jq -r '.merge_date')
+            BEIJING_MERGE_TIME=$(date -d "$UTC_MERGE_TIME" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$UTC_MERGE_TIME")
+            
             FULL_MESSAGE=$(echo "$COMMIT_DATA" | jq -r '.message' | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
 
-            # 导出多行变量的安全写法
+            # 导出环境变量
             echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_ENV
             echo "AUTHOR=$AUTHOR" >> $GITHUB_ENV
             echo "URL=$URL" >> $GITHUB_ENV
+            echo "BEIJING_MERGE_TIME=$BEIJING_MERGE_TIME" >> $GITHUB_ENV
             
             echo "FULL_MESSAGE<<EOF" >> $GITHUB_ENV
             echo "$FULL_MESSAGE" >> $GITHUB_ENV
             echo "EOF" >> $GITHUB_ENV
           fi
           
-      # 使用 GitHub Actions 缓存来持久化保存上一次的 SHA 文件
       - name: Cache Commit SHA
         if: steps.check_commit.outputs.is_updated == 'true'
         uses: actions/cache/save@v4
         with:
           path: .commit_cache
-          # 使用时间戳确保每次有更新时都能成功写入新缓存
           key: commit-cache-${{ matrix.repo }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       # 仅在有新提交更新时，才发送 Telegram 通知
@@ -97,17 +97,13 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # 1. 强制将虚拟机时区设置为北京时间，并获取当前抓取时间
-          sudo timedatectl set-timezone Asia/Shanghai
-          NOTIFY_TIME=$(date "+%Y-%m-%d %H:%M:%S")
-
-          # 2. 组装 Telegram HTML 消息（在里面加入通知时间）
+          # 组装 Telegram HTML 消息
           TEXT=$(cat <<EOF
           🔔 <b>代币代码变动监控</b>
 
           📦 <b>仓库:</b> <code>$TARGET_REPO</code>
           👤 <b>提交者:</b> <code>$AUTHOR</code>
-          ⏰ <b>通知时间(北京):</b> <code>$NOTIFY_TIME</code>
+          ⏰ <b>代码合并时间(北京):</b> <code>$BEIJING_MERGE_TIME</code>
           🔗 <b>详情:</b> <a href="$URL">查看 Commit ($SHORT_SHA)</a>
 
           📝 <b>完整变动内容:</b>
@@ -116,9 +112,6 @@ jobs:
           )
 
           # 发送消息
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${TELEGRAM_CHAT_ID}" \
-            -d "parse_mode=HTML" \
-            --data-urlencode "text=${TEXT}" > /dev/null
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"             -d "chat_id=${TELEGRAM_CHAT_ID}"             -d "parse_mode=HTML"             --data-urlencode "text=${TEXT}" > /dev/null
           
           echo "通知已发送。"
