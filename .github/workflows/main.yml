@@ -15,7 +15,20 @@ jobs:
         repo: [
           "ethereum/go-ethereum",
           "solana-labs/solana",
-          "bitcoin/bitcoin"
+          "bitcoin/bitcoin",
+          "crypto-org-chain/cronos",
+          "maticnetwork/bor",
+          "offchainlabs/nitro",
+          "ethereum-optimism/op-geth",
+          "bnb-chain/bsc",
+          "avax-labs/avalanchego",
+          "aptos-labs/aptos-core",
+          "monero-project/monero",
+          "cardano-foundation/cardano-node",
+          "paritytech/polkadot-sdk",
+          "cosmos/gaia",
+          "ton-blockchain/ton",
+          "mystenlabs/sui"
         ]
 
     steps:
