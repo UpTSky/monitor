@@ -21,7 +21,9 @@ jobs:
           "ledgerwatch/erigon", "paradigmxyz/reth", "flashbots/mev-boost", "availproject/avail",
           "celestiaorg/celestia-core", "0xsoniclabs/sonic", "movementlabsxyz/movement", "category-labs/monad",
           "category-labs/monad-bft", "monad-crypto/protocols", "MinaProtocol/mina", "AleoHQ/snarkOS",
-          "Electric-Coin-Company/zcash", "ZcashFoundation/zebra","XRPLF/rippled"
+          "Electric-Coin-Company/zcash", "ZcashFoundation/zebra","XRPLF/rippled","base/base",
+"LayerZero-Labs/LayerZero-v2","RaoFoundation/subtensor","berachain/beacon-kit","filecoin-project/lotus","starknet-io/SNIPs"
+
         ]
 
     steps:
