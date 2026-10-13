@@ -86,7 +86,7 @@ jobs:
             URL=$(echo "$COMMIT_DATA" | jq -r '.url')
             
             UTC_MERGE_TIME=$(echo "$COMMIT_DATA" | jq -r '.merge_date')
-            BEIJING_MERGE_TIME=$(date -d "$UTC_MERGE_TIME" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$UTC_MERGE_TIME")
+            BEIJING_MERGE_TIME=$(TZ="Asia/Shanghai" date -d "$UTC_MERGE_TIME" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$UTC_MERGE_TIME")
             
             FULL_MESSAGE=$(echo "$COMMIT_DATA" | jq -r '.message' | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
 
