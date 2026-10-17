@@ -1,115 +1,87 @@
-name: Token GitHub Monitor (Pure YAML)
+name: Token GitHub Monitor (Pure YAML - Optimized)
 
 on:
   schedule:
-    # 保持原样，虽然仍会受 GitHub 调度延迟影响，但至少能保证数据不重复
-    - cron: '*/30 * * * *'
-  workflow_dispatch: # 允许手动触发测试
+    # 巧妙避开整点、半点（比如改成第 13 和第 43 分钟），能显著减少 GitHub 的官方调度延迟
+    - cron: '13,43 * * * *'
+  workflow_dispatch: 
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      max-parallel: 15 # 限制最大并发，防止触发 GitHub 排队风暴
-      matrix:
-        repo: [
-          "ethereum/go-ethereum", "anza-xyz/agave", "bitcoin/bitcoin", "crypto-org-chain/cronos",
-          "maticnetwork/bor", "offchainlabs/nitro", "ethereum-optimism/op-geth", "bnb-chain/bsc",
-          "ava-labs/avalanchego", "aptos-labs/aptos-core", "monero-project/monero", "IntersectMBO/cardano-node",
-          "paritytech/polkadot-sdk", "cosmos/gaia", "ton-blockchain/ton", "mystenlabs/sui",
-          "ledgerwatch/erigon", "paradigmxyz/reth", "flashbots/mev-boost", "availproject/avail",
-          "celestiaorg/celestia-core", "0xsoniclabs/sonic", "movementlabsxyz/movement", "category-labs/monad",
-          "category-labs/monad-bft", "monad-crypto/protocols", "MinaProtocol/mina", "AleoHQ/snarkOS",
-          "Electric-Coin-Company/zcash", "ZcashFoundation/zebra","XRPLF/rippled","base/base",
-"LayerZero-Labs/LayerZero-v2","RaoFoundation/subtensor","berachain/beacon-kit","filecoin-project/lotus","starknet-io/SNIPs"
-
-        ]
-
+    # 砍掉 strategy matrix，合并为单机单线程串行处理，极大提升被 GitHub 响应的优先级
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 【核心修复 1】：添加缓存读取和自动保存（使用统一固定的 key 基础前缀）
+      # 使用统一的缓存，单台机器一次读写所有仓库的缓存
       - name: Restore/Save Commit Cache
         id: cache-sha
         uses: actions/cache@v4
         with:
           path: .commit_cache
-          key: commit-cache-${{ matrix.repo }}-${{ github.run_id }}
+          key: commit-cache-all-repos-${{ github.run_id }}
           restore-keys: |
-            commit-cache-${{ matrix.repo }}-
+            commit-cache-all-repos-
 
-      - name: Fetch Latest Commit and Filter
-        id: check_commit
+      - name: Fetch and Notify All Repos
         env:
-          TARGET_REPO: ${{ matrix.repo }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
-        run: |
-          echo "正在检查仓库: $TARGET_REPO"
-          
-          # 获取最新 commit 数据
-          COMMIT_DATA=$(gh api repos/$TARGET_REPO/commits --jq '.[0] | {sha: .sha, author: .commit.author.name, message: .commit.message, url: .html_url, merge_date: .commit.committer.date}')
-          
-          if [ -z "$COMMIT_DATA" ] || [ "$COMMIT_DATA" = "null" ]; then
-            echo "错误: 无法获取 $TARGET_REPO 的数据"
-            exit 1
-          fi
-
-          SHA=$(echo "$COMMIT_DATA" | jq -r '.sha')
-          echo "最新 SHA: $SHA"
-
-          # 读取缓存文件夹中的文件
-          REPO_FILE=$(echo "$TARGET_REPO" | tr '/' '_')
-          CACHE_DIR=".commit_cache"
-          mkdir -p "$CACHE_DIR"
-          
-          if [ -f "$CACHE_DIR/$REPO_FILE" ]; then
-            LAST_SHA=$(cat "$CACHE_DIR/$REPO_FILE")
-            echo "上一次保存的 SHA: $LAST_SHA"
-          else
-            LAST_SHA=""
-            echo "未找到历史缓存记录。"
-          fi
-
-          # 比对 SHA
-          if [ "$SHA" = "$LAST_SHA" ]; then
-            echo "代码未变动，跳过通知。"
-            echo "is_updated=false" >> $GITHUB_OUTPUT
-          else
-            echo "检测到新提交！"
-            echo "$SHA" > "$CACHE_DIR/$REPO_FILE"
-            echo "is_updated=true" >> $GITHUB_OUTPUT
-            
-            SHORT_SHA=${SHA:0:7}
-            AUTHOR=$(echo "$COMMIT_DATA" | jq -r '.author')
-            URL=$(echo "$COMMIT_DATA" | jq -r '.url')
-            
-            UTC_MERGE_TIME=$(echo "$COMMIT_DATA" | jq -r '.merge_date')
-            BEIJING_MERGE_TIME=$(TZ="Asia/Shanghai" date -d "$UTC_MERGE_TIME" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$UTC_MERGE_TIME")
-            
-            FULL_MESSAGE=$(echo "$COMMIT_DATA" | jq -r '.message' | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
-
-            # 导出环境变量供后续步骤使用
-            echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_ENV
-            echo "AUTHOR=$AUTHOR" >> $GITHUB_ENV
-            echo "URL=$URL" >> $GITHUB_ENV
-            echo "BEIJING_MERGE_TIME=$BEIJING_MERGE_TIME" >> $GITHUB_ENV
-            
-            echo "FULL_MESSAGE<<EOF" >> $GITHUB_ENV
-            echo "$FULL_MESSAGE" >> $GITHUB_ENV
-            echo "EOF" >> $GITHUB_ENV
-          fi
-          
-      # 仅在有新提交更新时，才发送 Telegram 通知
-      - name: Send to Telegram
-        if: steps.check_commit.outputs.is_updated == 'true'
-        env:
-          TARGET_REPO: ${{ matrix.repo }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TEXT=$(cat <<EOF
+          # 将所有 37 个仓库放入 Shell 数组中
+          REPOS=(
+            "ethereum/go-ethereum" "anza-xyz/agave" "bitcoin/bitcoin" "crypto-org-chain/cronos"
+            "maticnetwork/bor" "offchainlabs/nitro" "ethereum-optimism/op-geth" "bnb-chain/bsc"
+            "ava-labs/avalanchego" "aptos-labs/aptos-core" "monero-project/monero" "IntersectMBO/cardano-node"
+            "paritytech/polkadot-sdk" "cosmos/gaia" "ton-blockchain/ton" "mystenlabs/sui"
+            "ledgerwatch/erigon" "paradigmxyz/reth" "flashbots/mev-boost" "availproject/avail"
+            "celestiaorg/celestia-core" "0xsoniclabs/sonic" "movementlabsxyz/movement" "category-labs/monad"
+            "category-labs/monad-bft" "monad-crypto/protocols" "MinaProtocol/mina" "AleoHQ/snarkOS"
+            "Electric-Coin-Company/zcash" "ZcashFoundation/zebra" "XRPLF/rippled" "base/base"
+            "LayerZero-Labs/LayerZero-v2" "RaoFoundation/subtensor" "berachain/beacon-kit" "filecoin-project/lotus" "starknet-io/SNIPs"
+          )
+
+          CACHE_DIR=".commit_cache"
+          mkdir -p "$CACHE_DIR"
+
+          # 循环串行处理，对 GitHub 而言这只是一个普通任务
+          for TARGET_REPO in "${REPOS[@]}"; do
+            echo "----------------------------------------"
+            echo "正在检查仓库: $TARGET_REPO"
+            
+            COMMIT_DATA=$(gh api repos/$TARGET_REPO/commits --jq '.[0] | {sha: .sha, author: .commit.author.name, message: .commit.message, url: .html_url, merge_date: .commit.committer.date}' 2>/dev/null)
+            
+            if [ -z "$COMMIT_DATA" ] || [ "$COMMIT_DATA" = "null" ]; then
+              echo "警告: 无法获取 $TARGET_REPO 的数据，跳过。"
+              continue
+            fi
+
+            SHA=$(echo "$COMMIT_DATA" | jq -r '.sha')
+            REPO_FILE=$(echo "$TARGET_REPO" | tr '/' '_')
+            
+            if [ -f "$CACHE_DIR/$REPO_FILE" ]; then
+              LAST_SHA=$(cat "$CACHE_DIR/$REPO_FILE")
+            else
+              LAST_SHA=""
+            fi
+
+            if [ "$SHA" = "$LAST_SHA" ]; then
+              echo "代码未变动，跳过通知。"
+            else
+              echo "检测到新提交！发送 Telegram 通知..."
+              echo "$SHA" > "$CACHE_DIR/$REPO_FILE"
+              
+              SHORT_SHA=${SHA:0:7}
+              AUTHOR=$(echo "$COMMIT_DATA" | jq -r '.author')
+              URL=$(echo "$COMMIT_DATA" | jq -r '.url')
+              
+              UTC_MERGE_TIME=$(echo "$COMMIT_DATA" | jq -r '.merge_date')
+              BEIJING_MERGE_TIME=$(TZ="Asia/Shanghai" date -d "$UTC_MERGE_TIME" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$UTC_MERGE_TIME")
+              FULL_MESSAGE=$(echo "$COMMIT_DATA" | jq -r '.message' | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+
+              TEXT=$(cat <<EOF
           🔔 <b>代码变动监控</b>
 
           📦 <b>仓库:</b> <code>$TARGET_REPO</code>
@@ -120,11 +92,15 @@ jobs:
           📝 <b>完整变动内容:</b>
           <code>$FULL_MESSAGE</code>
           EOF
-          )
+              )
 
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${TELEGRAM_CHAT_ID}" \
-            -d "parse_mode=HTML" \
-            --data-urlencode "text=${TEXT}" > /dev/null
-          
-          echo "通知已发送。"
+              # 直接在循环内发送请求
+              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                -d "chat_id=${TELEGRAM_CHAT_ID}" \
+                -d "parse_mode=HTML" \
+                --data-urlencode "text=${TEXT}" > /dev/null
+              
+              # 稍微减速防封
+              sleep 1
+            fi
+          done
