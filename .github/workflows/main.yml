@@ -30,7 +30,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 将所有 37 个仓库放入 Shell 数组中
+          # 完美整合 37 个原生库 + 20 个不重复的新增重磅治理与技术库（共 57 个监控目标）
           REPOS=(
             "ethereum/go-ethereum" "anza-xyz/agave" "bitcoin/bitcoin" "crypto-org-chain/cronos"
             "maticnetwork/bor" "offchainlabs/nitro" "ethereum-optimism/op-geth" "bnb-chain/bsc"
@@ -40,7 +40,13 @@ jobs:
             "celestiaorg/celestia-core" "0xsoniclabs/sonic" "movementlabsxyz/movement" "category-labs/monad"
             "category-labs/monad-bft" "monad-crypto/protocols" "MinaProtocol/mina" "AleoHQ/snarkOS"
             "Electric-Coin-Company/zcash" "ZcashFoundation/zebra" "XRPLF/rippled" "base/base"
-            "LayerZero-Labs/LayerZero-v2" "RaoFoundation/subtensor" "berachain/beacon-kit" "filecoin-project/lotus" "starknet-io/SNIPs"
+            "LayerZero-Labs/LayerZero-v2" "RaoFoundation/subtensor" "berachain/beacon-kit" "filecoin-project/lotus"
+            "starknet-io/SNIPs" "stacks-network/stacks-core" "near/nearcore" "sui-foundation/sips"
+            "sei-protocol/sei-chain" "matter-labs/zksync-era" "scroll-tech/scroll" "taikoxyz/taiko-mono"
+            "Layr-Labs/eigenlayer-contracts" "Layr-Labs/eigenlayer-middleware" "babylonlabs-io/babylon" "hyperlane-xyz/hyperlane-monorepo"
+            "jito-foundation/jito-solana" "ArbitrumFoundation/governance" "ethereum/consensus-specs" "sigp/lighthouse"
+            "ethereum-optimism/specs" "ZKsync-Association/zk-governance" "matter-labs/era-contracts" "aave-dao/aave-proposals-v3"
+            "celestiaorg/celestia-app"
           )
 
           CACHE_DIR=".commit_cache"
