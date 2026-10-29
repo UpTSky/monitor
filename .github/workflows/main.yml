@@ -46,7 +46,7 @@ jobs:
             "Layr-Labs/eigenlayer-contracts" "Layr-Labs/eigenlayer-middleware" "babylonlabs-io/babylon" "hyperlane-xyz/hyperlane-monorepo"
             "jito-foundation/jito-solana" "ArbitrumFoundation/governance" "ethereum/consensus-specs" "sigp/lighthouse"
             "ethereum-optimism/specs" "ZKsync-Association/zk-governance" "matter-labs/era-contracts" "aave-dao/aave-proposals-v3"
-            "celestiaorg/celestia-app"
+            "celestiaorg/celestia-app" "livepeer/protocol" "livepeer/go-livepeer" "ArweaveTeam/arweave" "LFDT-Lineth/lineth-monorepo" "Consensys/linea-monorepo-network-oracle" "risc0/risc0" "succinctlabs/network" "succinctlabs/sp1" "starkware-libs/cairo" "FuelLabs/sway" "FuelLabs/fuel-bridge" "fuellabs/fuel-core"
           )
 
           CACHE_DIR=".commit_cache"
