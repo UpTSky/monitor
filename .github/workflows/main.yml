@@ -1,20 +1,18 @@
-name: Token GitHub Monitor (Pure YAML - Optimized)
+name: Token GitHub Monitor (Four-Layer Funnel + Dual-Track)
 
 on:
   schedule:
-    # 巧妙避开整点、半点（比如改成第 13 和第 43 分钟），能显著减少 GitHub 的官方调度延迟
+    # 巧妙避开整点、半点（第 13 和第 43 分钟），减少 GitHub 官方调度延迟
     - cron: '13,43 * * * *'
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    # 砍掉 strategy matrix，合并为单机单线程串行处理，极大提升被 GitHub 响应的优先级
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 使用统一的缓存，单台机器一次读写所有仓库的缓存
       - name: Restore/Save Commit Cache
         id: cache-sha
         uses: actions/cache@v4
@@ -24,49 +22,75 @@ jobs:
           restore-keys: |
             commit-cache-all-repos-
 
-      - name: Fetch and Notify All Repos
+      - name: Fetch, Filter and Notify All Repos
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 完美整合 37 个原生库 + 20 个不重复的新增重磅治理与技术库（共 57 个监控目标）
-          REPOS=(
+          # ==============================================================================
+          # 第一层：仓库按“噪音密度”分组（共 57 个监控目标）
+          # ==============================================================================
+          # A 类：高纯度治理与规范库（8 个，全量放行）
+          CLASS_A_REPOS=(
+            "starknet-io/SNIPs" "sui-foundation/sips" "ArbitrumFoundation/governance" "ZKsync-Association/zk-governance"
+            "aave-dao/aave-proposals-v3" "ethereum/consensus-specs" "ethereum-optimism/specs" "monad-crypto/protocols"
+          )
+
+          # B 类：高频工程代码库（49 个，严格过滤 + Releases 正式发版双轨监控）
+          CLASS_B_REPOS=(
             "ethereum/go-ethereum" "anza-xyz/agave" "bitcoin/bitcoin" "crypto-org-chain/cronos"
             "maticnetwork/bor" "offchainlabs/nitro" "ethereum-optimism/op-geth" "bnb-chain/bsc"
             "ava-labs/avalanchego" "aptos-labs/aptos-core" "monero-project/monero" "IntersectMBO/cardano-node"
             "paritytech/polkadot-sdk" "cosmos/gaia" "ton-blockchain/ton" "mystenlabs/sui"
             "ledgerwatch/erigon" "paradigmxyz/reth" "flashbots/mev-boost" "availproject/avail"
             "celestiaorg/celestia-core" "0xsoniclabs/sonic" "movementlabsxyz/movement" "category-labs/monad"
-            "category-labs/monad-bft" "monad-crypto/protocols" "MinaProtocol/mina" "AleoHQ/snarkOS"
-            "Electric-Coin-Company/zcash" "ZcashFoundation/zebra" "XRPLF/rippled" "base/base"
-            "LayerZero-Labs/LayerZero-v2" "RaoFoundation/subtensor" "berachain/beacon-kit" "filecoin-project/lotus"
-            "starknet-io/SNIPs" "stacks-network/stacks-core" "near/nearcore" "sui-foundation/sips"
-            "sei-protocol/sei-chain" "matter-labs/zksync-era" "scroll-tech/scroll" "taikoxyz/taiko-mono"
-            "Layr-Labs/eigenlayer-contracts" "Layr-Labs/eigenlayer-middleware" "babylonlabs-io/babylon" "hyperlane-xyz/hyperlane-monorepo"
-            "jito-foundation/jito-solana" "ArbitrumFoundation/governance" "ethereum/consensus-specs" "sigp/lighthouse"
-            "ethereum-optimism/specs" "ZKsync-Association/zk-governance" "matter-labs/era-contracts" "aave-dao/aave-proposals-v3"
-            "celestiaorg/celestia-app" "livepeer/protocol" "livepeer/go-livepeer" "ArweaveTeam/arweave" "LFDT-Lineth/lineth-monorepo" "Consensys/linea-monorepo-network-oracle" "risc0/risc0" "succinctlabs/network" "succinctlabs/sp1" "starkware-libs/cairo" "FuelLabs/sway" "FuelLabs/fuel-bridge" "fuellabs/fuel-core"
+            "category-labs/monad-bft" "MinaProtocol/mina" "AleoHQ/snarkOS" "Electric-Coin-Company/zcash"
+            "ZcashFoundation/zebra" "XRPLF/rippled" "base/base" "LayerZero-Labs/LayerZero-v2"
+            "RaoFoundation/subtensor" "berachain/beacon-kit" "filecoin-project/lotus" "stacks-network/stacks-core"
+            "near/nearcore" "sei-protocol/sei-chain" "matter-labs/zksync-era" "scroll-tech/scroll"
+            "taikoxyz/taiko-mono" "Layr-Labs/eigenlayer-contracts" "Layr-Labs/eigenlayer-middleware" "babylonlabs-io/babylon"
+            "hyperlane-xyz/hyperlane-monorepo" "jito-foundation/jito-solana" "sigp/lighthouse" "matter-labs/era-contracts"
+            "celestiaorg/celestia-app"
           )
 
           CACHE_DIR=".commit_cache"
           mkdir -p "$CACHE_DIR"
 
-          # 循环串行处理，对 GitHub 而言这只是一个普通任务
-          for TARGET_REPO in "${REPOS[@]}"; do
+          # 转义 Telegram HTML 特殊字符
+          escape_html() {
+            echo "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
+          }
+
+          # 发送 Telegram 消息函数
+          send_telegram() {
+            local msg="$1"
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d "chat_id=${TELEGRAM_CHAT_ID}" \
+              -d "parse_mode=HTML" \
+              -d "disable_web_page_preview=true" \
+              --data-urlencode "text=${msg}" > /dev/null
+            sleep 1
+          }
+
+          # 通用 Commit 检查与四层漏斗过滤函数
+          check_repo_commits() {
+            local TARGET_REPO="$1"
+            local REPO_CLASS="$2"
+
             echo "----------------------------------------"
-            echo "正在检查仓库: $TARGET_REPO"
-            
-            COMMIT_DATA=$(gh api repos/$TARGET_REPO/commits --jq '.[0] | {sha: .sha, author: .commit.author.name, message: .commit.message, url: .html_url, merge_date: .commit.committer.date}' 2>/dev/null)
-            
+            echo "[$REPO_CLASS 类] 正在检查提交: $TARGET_REPO"
+
+            COMMIT_DATA=$(gh api "repos/$TARGET_REPO/commits" --jq '.[0] | {sha: .sha, author: .commit.author.name, login: .author.login, message: .commit.message, url: .html_url, merge_date: .commit.committer.date}' 2>/dev/null)
+
             if [ -z "$COMMIT_DATA" ] || [ "$COMMIT_DATA" = "null" ]; then
-              echo "警告: 无法获取 $TARGET_REPO 的数据，跳过。"
-              continue
+              echo "警告: 无法获取 $TARGET_REPO 的提交数据，跳过。"
+              return
             fi
 
             SHA=$(echo "$COMMIT_DATA" | jq -r '.sha')
             REPO_FILE=$(echo "$TARGET_REPO" | tr '/' '_')
-            
+
             if [ -f "$CACHE_DIR/$REPO_FILE" ]; then
               LAST_SHA=$(cat "$CACHE_DIR/$REPO_FILE")
             else
@@ -75,38 +99,165 @@ jobs:
 
             if [ "$SHA" = "$LAST_SHA" ]; then
               echo "代码未变动，跳过通知。"
-            else
-              echo "检测到新提交！发送 Telegram 通知..."
-              echo "$SHA" > "$CACHE_DIR/$REPO_FILE"
-              
-              SHORT_SHA=${SHA:0:7}
-              AUTHOR=$(echo "$COMMIT_DATA" | jq -r '.author')
-              URL=$(echo "$COMMIT_DATA" | jq -r '.url')
-              
-              UTC_MERGE_TIME=$(echo "$COMMIT_DATA" | jq -r '.merge_date')
-              BEIJING_MERGE_TIME=$(TZ="Asia/Shanghai" date -d "$UTC_MERGE_TIME" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$UTC_MERGE_TIME")
-              FULL_MESSAGE=$(echo "$COMMIT_DATA" | jq -r '.message' | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
-
-              TEXT=$(cat <<EOF
-          🔔 <b>代码变动监控</b>
-
-          📦 <b>仓库:</b> <code>$TARGET_REPO</code>
-          👤 <b>提交者:</b> <code>$AUTHOR</code>
-          ⏰ <b>代码合并时间(北京):</b> <code>$BEIJING_MERGE_TIME</code>
-          🔗 <b>详情:</b> <a href="$URL">查看 Commit ($SHORT_SHA)</a>
-
-          📝 <b>完整变动内容:</b>
-          <code>$FULL_MESSAGE</code>
-          EOF
-              )
-
-              # 直接在循环内发送请求
-              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-                -d "chat_id=${TELEGRAM_CHAT_ID}" \
-                -d "parse_mode=HTML" \
-                --data-urlencode "text=${TEXT}" > /dev/null
-              
-              # 稍微减速防封
-              sleep 1
+              return
             fi
+
+            # 【第五层避坑】只要发现新 SHA，第一时间更新缓存，防止被过滤的提交下次重复触发
+            echo "$SHA" > "$CACHE_DIR/$REPO_FILE"
+
+            FULL_MESSAGE_RAW=$(echo "$COMMIT_DATA" | jq -r '.message')
+            # 【第二层】提取首行标题进行规则匹配，避免正文长篇说明干扰
+            FIRST_LINE=$(echo "$FULL_MESSAGE_RAW" | head -n 1)
+            FIRST_LINE_LOWER=$(echo "$FIRST_LINE" | tr '[:upper:]' '[:lower:]')
+
+            AUTHOR=$(echo "$COMMIT_DATA" | jq -r '.author')
+            LOGIN=$(echo "$COMMIT_DATA" | jq -r '.login // ""')
+            AUTHOR_LOWER=$(echo "$AUTHOR $LOGIN" | tr '[:upper:]' '[:lower:]')
+
+            TAG_LABEL=""
+
+            if [ "$REPO_CLASS" = "A" ]; then
+              # A 类仓库：全量放行
+              TAG_LABEL="🏛️【治理与协议规范】"
+            else
+              # B 类仓库：执行机器人过滤 + 白名单抢救 + 黑名单一票否决
+              # 1. 屏蔽自动化机器人账号
+              if echo "$AUTHOR_LOWER" | grep -Eq '(dependabot|renovate|github-actions|mergify)\[bot\]|^dependabot$|^renovate$'; then
+                echo "已过滤机器人提交 ($AUTHOR): $FIRST_LINE"
+                return
+              fi
+
+              # 2. 【第三层】高价值白名单抢救规则（优先于黑名单，不区分大小写）
+              WHITELIST_REGEX='(release|mainnet|hardfork|hard-fork|hard fork|activation|upgrade|epoch|protocol[ _-]?version|emission|tokenomics|fee|burn|staking|reward|slash|governance|compliance|freeze|(^|[^a-z0-9])(eip|sip|cip|nep|bip)-[0-9]+)'
+              if echo "$FIRST_LINE_LOWER" | grep -Eq "$WHITELIST_REGEX"; then
+                TAG_LABEL="🚨【核心升级/经济变动】"
+              else
+                # 3. 【第二层】常规工程前缀黑名单（一票否决）
+                BLACKLIST_REGEX='^(docs?|tests?|ci|build|style|lint|refactor|chore\((deps|ci|infra)\)|fix\((rpc|test|prune|provider)\))([(:!]|$)'
+                if echo "$FIRST_LINE_LOWER" | grep -Eq "$BLACKLIST_REGEX"; then
+                  echo "已过滤工程噪音提交: $FIRST_LINE"
+                  return
+                fi
+                TAG_LABEL="📌【常规功能迭代】"
+              fi
+            fi
+
+            echo "命中推送规则 ($TAG_LABEL)！发送 Telegram 通知..."
+
+            SHORT_SHA=${SHA:0:7}
+            URL=$(echo "$COMMIT_DATA" | jq -r '.url')
+            UTC_MERGE_TIME=$(echo "$COMMIT_DATA" | jq -r '.merge_date')
+            BEIJING_MERGE_TIME=$(TZ="Asia/Shanghai" date -d "$UTC_MERGE_TIME" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$UTC_MERGE_TIME")
+
+            # 按字符截取，防止超长正文触发 Telegram 4096 字符上限
+            SAFE_MESSAGE=$(echo "$FULL_MESSAGE_RAW" | cut -c 1-1500)
+            if [ ${#FULL_MESSAGE_RAW} -gt 1500 ]; then
+              SAFE_MESSAGE="$SAFE_MESSAGE...(内容过长已截断)"
+            fi
+            ESCAPED_MESSAGE=$(escape_html "$SAFE_MESSAGE")
+            ESCAPED_AUTHOR=$(escape_html "$AUTHOR")
+
+            TEXT=$(cat <<EOF
+$TAG_LABEL
+
+📦 <b>仓库:</b> <code>$TARGET_REPO</code>
+👤 <b>提交者:</b> <code>$ESCAPED_AUTHOR</code>
+⏰ <b>合并时间(北京):</b> <code>$BEIJING_MERGE_TIME</code>
+🔗 <b>详情:</b> <a href="$URL">查看 Commit ($SHORT_SHA)</a>
+
+📝 <b>变动内容:</b>
+<code>$ESCAPED_MESSAGE</code>
+EOF
+            )
+
+            send_telegram "$TEXT"
+          }
+
+          # ==============================================================================
+          # 第四层：B 类核心仓库 Releases（正式发版）双轨监控函数
+          # ==============================================================================
+          check_repo_release() {
+            local TARGET_REPO="$1"
+            echo "[$TARGET_REPO] 正在检查最新正式 Release..."
+
+            RELEASE_DATA=$(gh api "repos/$TARGET_REPO/releases/latest" --jq '{tag: .tag_name, name: .name, draft: .draft, prerelease: .prerelease, url: .html_url, published_at: .published_at, body: .body}' 2>/dev/null)
+
+            # 若仓库无 Release 或请求 404 则直接跳过
+            if [ -z "$RELEASE_DATA" ] || [ "$RELEASE_DATA" = "null" ]; then
+              return
+            fi
+
+            IS_DRAFT=$(echo "$RELEASE_DATA" | jq -r '.draft')
+            TAG_NAME=$(echo "$RELEASE_DATA" | jq -r '.tag // ""')
+
+            if [ -z "$TAG_NAME" ] || [ "$IS_DRAFT" = "true" ]; then
+              return
+            fi
+
+            REPO_FILE=$(echo "$TARGET_REPO" | tr '/' '_')
+            RELEASE_CACHE_FILE="$CACHE_DIR/${REPO_FILE}_release"
+
+            if [ -f "$RELEASE_CACHE_FILE" ]; then
+              LAST_TAG=$(cat "$RELEASE_CACHE_FILE")
+            else
+              LAST_TAG=""
+            fi
+
+            if [ "$TAG_NAME" = "$LAST_TAG" ]; then
+              echo "正式版本未变动 ($TAG_NAME)，跳过。"
+              return
+            fi
+
+            # 第一时间写入版本缓存
+            echo "$TAG_NAME" > "$RELEASE_CACHE_FILE"
+
+            echo "检测到新正式版本发布 ($TAG_NAME)！发送高优 Telegram 警报..."
+
+            REL_NAME=$(echo "$RELEASE_DATA" | jq -r '.name // ""')
+            REL_URL=$(echo "$RELEASE_DATA" | jq -r '.url')
+            IS_PRE=$(echo "$RELEASE_DATA" | jq -r '.prerelease')
+            UTC_PUB_TIME=$(echo "$RELEASE_DATA" | jq -r '.published_at')
+            BEIJING_PUB_TIME=$(TZ="Asia/Shanghai" date -d "$UTC_PUB_TIME" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$UTC_PUB_TIME")
+            REL_BODY_RAW=$(echo "$RELEASE_DATA" | jq -r '.body // "无发布说明"')
+
+            SAFE_BODY=$(echo "$REL_BODY_RAW" | cut -c 1-1400)
+            if [ ${#REL_BODY_RAW} -gt 1400 ]; then
+              SAFE_BODY="$SAFE_BODY...(发布说明过长已截断)"
+            fi
+
+            ESCAPED_TAG=$(escape_html "$TAG_NAME")
+            ESCAPED_NAME=$(escape_html "$REL_NAME")
+            ESCAPED_BODY=$(escape_html "$SAFE_BODY")
+
+            REL_TYPE="正式版 (Mainnet/Stable)"
+            if [ "$IS_PRE" = "true" ]; then
+              REL_TYPE="预发布版 (Pre-release)"
+            fi
+
+            TEXT=$(cat <<EOF
+🚀🚨【正式版本发布 / 发版双轨警报】
+
+📦 <b>仓库:</b> <code>$TARGET_REPO</code>
+🏷️ <b>版本号:</b> <code>$ESCAPED_TAG</code> ($REL_TYPE)
+📌 <b>版本标题:</b> <code>$ESCAPED_NAME</code>
+⏰ <b>发布时间(北京):</b> <code>$BEIJING_PUB_TIME</code>
+🔗 <b>发版详情:</b> <a href="$REL_URL">前往 GitHub Release</a>
+
+📋 <b>更新日志摘要:</b>
+<code>$ESCAPED_BODY</code>
+EOF
+            )
+
+            send_telegram "$TEXT"
+          }
+
+          # 1. 遍历 A 类高纯度治理与规范库
+          for TARGET_REPO in "${CLASS_A_REPOS[@]}"; do
+            check_repo_commits "$TARGET_REPO" "A"
+          done
+
+          # 2. 遍历 B 类高频工程代码库（Commit 漏斗过滤 + Release 正式发版双轨）
+          for TARGET_REPO in "${CLASS_B_REPOS[@]}"; do
+            check_repo_commits "$TARGET_REPO" "B"
+            check_repo_release "$TARGET_REPO"
           done
