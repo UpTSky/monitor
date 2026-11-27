@@ -2,7 +2,6 @@ name: Token GitHub Monitor (Four-Layer Funnel + Dual-Track)
 
 on:
   schedule:
-    # 避开整点与半点（第 13 和第 43 分钟），减少 GitHub Actions 官方调度延迟
     - cron: '13,43 * * * *'
   workflow_dispatch:
 
@@ -28,16 +27,11 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # ==============================================================================
-          # 第一层：仓库按“噪音密度”分组（共 57 个监控目标）
-          # ==============================================================================
-          # A 类：高纯度治理与规范库（8 个，全量放行）
           CLASS_A_REPOS=(
             "starknet-io/SNIPs" "sui-foundation/sips" "ArbitrumFoundation/governance" "ZKsync-Association/zk-governance"
             "aave-dao/aave-proposals-v3" "ethereum/consensus-specs" "ethereum-optimism/specs" "monad-crypto/protocols"
           )
 
-          # B 类：高频工程代码库（49 个，严格过滤 + Releases 正式/预发布发版双轨监控）
           CLASS_B_REPOS=(
             "ethereum/go-ethereum" "anza-xyz/agave" "bitcoin/bitcoin" "crypto-org-chain/cronos"
             "maticnetwork/bor" "offchainlabs/nitro" "ethereum-optimism/op-geth" "bnb-chain/bsc"
@@ -57,12 +51,10 @@ jobs:
           CACHE_DIR=".commit_cache"
           mkdir -p "$CACHE_DIR"
 
-          # 安全转义 Telegram HTML 特殊字符（使用 printf 避免 -n/-e 参数歧义）
           escape_html() {
-            printf '%s\n' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
+            printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
           }
 
-          # 发送 Telegram 消息函数
           send_telegram() {
             local msg="$1"
             curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
@@ -73,7 +65,65 @@ jobs:
             sleep 1
           }
 
-          # 通用 Commit 检查与四层漏斗过滤函数（支持区间回溯防漏报）
+          process_single_commit() {
+            local TARGET_REPO="$1"
+            local REPO_CLASS="$2"
+            local COMMIT_DATA="$3"
+
+            local SHA=$(printf '%s' "$COMMIT_DATA" | jq -r '.sha')
+            local FULL_MESSAGE_RAW=$(printf '%s' "$COMMIT_DATA" | jq -r '.message')
+            local FIRST_LINE=$(printf '%s\n' "$FULL_MESSAGE_RAW" | head -n 1)
+            local FIRST_LINE_LOWER=$(printf '%s' "$FIRST_LINE" | tr '[:upper:]' '[:lower:]')
+
+            local AUTHOR=$(printf '%s' "$COMMIT_DATA" | jq -r '.author')
+            local LOGIN=$(printf '%s' "$COMMIT_DATA" | jq -r '.login // ""')
+            local AUTHOR_LOWER=$(printf '%s %s' "$AUTHOR" "$LOGIN" | tr '[:upper:]' '[:lower:]')
+
+            local TAG_LABEL=""
+
+            if [ "$REPO_CLASS" = "A" ]; then
+              TAG_LABEL="🏛️【治理与协议规范】"
+            else
+              if printf '%s' "$AUTHOR_LOWER" | grep -Eq '(dependabot|renovate|github-actions|mergify)\[bot\]|^dependabot$|^renovate$'; then
+                echo "已过滤机器人提交 ($AUTHOR): $FIRST_LINE"
+                return
+              fi
+
+              local WHITELIST_REGEX='(release|mainnet|hardfork|hard-fork|hard fork|activation|upgrade|epoch|protocol[ _-]?version|emission|tokenomics|fee|burn|staking|reward|slash|governance|compliance|freeze|(^|[^a-z0-9])(eip|sip|cip|nep|bip)-[0-9]+)'
+              if printf '%s' "$FIRST_LINE_LOWER" | grep -Eq "$WHITELIST_REGEX"; then
+                TAG_LABEL="🚨【核心升级/经济变动】"
+              else
+                local BLACKLIST_REGEX='^(docs?|tests?|ci|build|style|lint|refactor|chore\((deps|ci|infra)\)|fix\((rpc|test|prune|provider)\))([(:!]|$)'
+                if printf '%s' "$FIRST_LINE_LOWER" | grep -Eq "$BLACKLIST_REGEX"; then
+                  echo "已过滤工程噪音提交: $FIRST_LINE"
+                  return
+                fi
+                TAG_LABEL="📌【常规功能迭代】"
+              fi
+            fi
+
+            echo "命中推送规则 ($TAG_LABEL)！发送 Telegram 通知..."
+
+            local SHORT_SHA=${SHA:0:7}
+            local URL=$(printf '%s' "$COMMIT_DATA" | jq -r '.url')
+            local UTC_MERGE_TIME=$(printf '%s' "$COMMIT_DATA" | jq -r '.merge_date')
+            local BEIJING_MERGE_TIME=$(TZ="Asia/Shanghai" date -d "$UTC_MERGE_TIME" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || printf '%s' "$UTC_MERGE_TIME")
+
+            local SAFE_MESSAGE=$(printf '%s' "$COMMIT_DATA" | jq -r '.message[0:1500]')
+            local MSG_LEN=$(printf '%s' "$COMMIT_DATA" | jq -r '.message | length')
+            if [ "$MSG_LEN" -gt 1500 ]; then
+              SAFE_MESSAGE="${SAFE_MESSAGE}...(内容过长已截断)"
+            fi
+            local ESCAPED_MESSAGE=$(escape_html "$SAFE_MESSAGE")
+            local ESCAPED_AUTHOR=$(escape_html "$AUTHOR")
+
+            local TEXT
+            printf -v TEXT '%s\n\n📦 <b>仓库:</b> <code>%s</code>\n👤 <b>提交者:</b> <code>%s</code>\n⏰ <b>合并时间(北京):</b> <code>%s</code>\n🔗 <b>详情:</b> <a href="%s">查看 Commit (%s)</a>\n\n📝 <b>变动内容:</b>\n<code>%s</code>' \
+              "$TAG_LABEL" "$TARGET_REPO" "$ESCAPED_AUTHOR" "$BEIJING_MERGE_TIME" "$URL" "$SHORT_SHA" "$ESCAPED_MESSAGE"
+
+            send_telegram "$TEXT"
+          }
+
           check_repo_commits() {
             local TARGET_REPO="$1"
             local REPO_CLASS="$2"
@@ -81,25 +131,19 @@ jobs:
             echo "----------------------------------------"
             echo "[$REPO_CLASS 类] 正在检查提交: $TARGET_REPO"
 
-            # 拉取最近 15 条提交，避免 30 分钟内高频合并导致重要更新被后续提交覆盖
-            COMMITS_JSON=$(gh api "repos/$TARGET_REPO/commits?per_page=15" 2>/dev/null)
-            COUNT=$(echo "$COMMITS_JSON" | jq 'if type=="array" then length else 0 end' 2>/dev/null || echo 0)
+            local COMMITS_JSON=$(gh api "repos/$TARGET_REPO/commits?per_page=15" --jq '[.[] | {sha: .sha, author: .commit.author.name, login: .author.login, message: .commit.message, url: .html_url, merge_date: .commit.committer.date}]' 2>/dev/null)
 
-            if [ "$COUNT" -eq 0 ]; then
+            if [ -z "$COMMITS_JSON" ] || [ "$COMMITS_JSON" = "null" ] || [ "$COMMITS_JSON" = "[]" ]; then
               echo "警告: 无法获取 $TARGET_REPO 的提交数据，跳过。"
               return
             fi
 
-            LATEST_SHA=$(echo "$COMMITS_JSON" | jq -r '.[0].sha // ""')
-            if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
-              return
-            fi
+            local LATEST_SHA=$(printf '%s' "$COMMITS_JSON" | jq -r '.[0].sha')
+            local REPO_FILE=$(printf '%s' "$TARGET_REPO" | tr '/' '_')
 
-            REPO_FILE=$(printf '%s' "$TARGET_REPO" | tr '/' '_')
+            local LAST_SHA=""
             if [ -f "$CACHE_DIR/$REPO_FILE" ]; then
               LAST_SHA=$(cat "$CACHE_DIR/$REPO_FILE")
-            else
-              LAST_SHA=""
             fi
 
             if [ "$LATEST_SHA" = "$LAST_SHA" ]; then
@@ -107,138 +151,52 @@ jobs:
               return
             fi
 
-            # 第一时间更新缓存为最新 SHA，防止后续异常导致重复推送
             printf '%s' "$LATEST_SHA" > "$CACHE_DIR/$REPO_FILE"
 
-            # 首次运行无缓存时仅检查最新 1 条防刷屏；有缓存时回溯自 LAST_SHA 以来的所有新提交并按时间正序排列
             if [ -z "$LAST_SHA" ]; then
-              TARGET_COMMITS=$(echo "$COMMITS_JSON" | jq -c '[.[0]]')
-            else
-              TARGET_COMMITS=$(echo "$COMMITS_JSON" | jq -c --arg last "$LAST_SHA" '
-                reduce .[] as $c (
-                  {found: false, items: []};
-                  if .found then .
-                  elif $c.sha == $last then .found = true
-                  else .items += [$c]
-                  end
-                ) | .items | reverse
-              ')
+              local FIRST_COMMIT=$(printf '%s' "$COMMITS_JSON" | jq -c '.[0]')
+              process_single_commit "$TARGET_REPO" "$REPO_CLASS" "$FIRST_COMMIT"
+              return
             fi
 
-            echo "$TARGET_COMMITS" | jq -c '.[]' | while IFS= read -r ITEM; do
-              COMMIT_DATA=$(echo "$ITEM" | jq '{
-                sha: .sha,
-                author: (.commit.author.name // "unknown"),
-                login: (.author.login // ""),
-                message: (.commit.message // ""),
-                url: .html_url,
-                merge_date: .commit.committer.date
-              }')
-
-              SHA=$(echo "$COMMIT_DATA" | jq -r '.sha')
-              FULL_MESSAGE_RAW=$(echo "$COMMIT_DATA" | jq -r '.message')
-              FIRST_LINE=$(printf '%s\n' "$FULL_MESSAGE_RAW" | head -n 1)
-              FIRST_LINE_LOWER=$(printf '%s' "$FIRST_LINE" | tr '[:upper:]' '[:lower:]')
-
-              AUTHOR=$(echo "$COMMIT_DATA" | jq -r '.author')
-              LOGIN=$(echo "$COMMIT_DATA" | jq -r '.login')
-              AUTHOR_LOWER=$(printf '%s %s' "$AUTHOR" "$LOGIN" | tr '[:upper:]' '[:lower:]')
-
-              TAG_LABEL=""
-
-              if [ "$REPO_CLASS" = "A" ]; then
-                TAG_LABEL="🏛️【治理与协议规范】"
-              else
-                # 1. 屏蔽自动化机器人账号
-                if printf '%s' "$AUTHOR_LOWER" | grep -Eq '(dependabot|renovate|github-actions|mergify)\[bot\]|^dependabot$|^renovate$'; then
-                  echo "已过滤机器人提交 ($AUTHOR): $FIRST_LINE"
-                  continue
-                fi
-
-                # 2. 高价值白名单抢救规则（优先于黑名单，不区分大小写）
-                WHITELIST_REGEX='(release|mainnet|hardfork|hard-fork|hard fork|activation|upgrade|epoch|protocol[ _-]?version|emission|tokenomics|fee|burn|staking|reward|slash|governance|compliance|freeze|(^|[^a-z0-9])(eip|sip|cip|nep|bip)-[0-9]+)'
-                if printf '%s' "$FIRST_LINE_LOWER" | grep -Eq "$WHITELIST_REGEX"; then
-                  TAG_LABEL="🚨【核心升级/经济变动】"
-                else
-                  # 3. 常规工程前缀黑名单（一票否决）
-                  BLACKLIST_REGEX='^(docs?|tests?|ci|build|style|lint|refactor|chore\((deps|ci|infra)\)|fix\((rpc|test|prune|provider)\))([(:!]|$)'
-                  if printf '%s' "$FIRST_LINE_LOWER" | grep -Eq "$BLACKLIST_REGEX"; then
-                    echo "已过滤工程噪音提交: $FIRST_LINE"
-                    continue
-                  fi
-                  TAG_LABEL="📌【常规功能迭代】"
-                fi
+            local NEW_COMMITS=()
+            local COUNT=$(printf '%s' "$COMMITS_JSON" | jq 'length')
+            for (( i=0; i<COUNT; i++ )); do
+              local ITEM=$(printf '%s' "$COMMITS_JSON" | jq -c ".[$i]")
+              local CUR_SHA=$(printf '%s' "$ITEM" | jq -r '.sha')
+              if [ "$CUR_SHA" = "$LAST_SHA" ]; then
+                break
               fi
+              NEW_COMMITS+=("$ITEM")
+            done
 
-              echo "命中推送规则 ($TAG_LABEL)！发送 Telegram 通知: $FIRST_LINE"
-
-              SHORT_SHA=${SHA:0:7}
-              URL=$(echo "$COMMIT_DATA" | jq -r '.url')
-              UTC_MERGE_TIME=$(echo "$COMMIT_DATA" | jq -r '.merge_date')
-              BEIJING_MERGE_TIME=$(TZ="Asia/Shanghai" date -d "$UTC_MERGE_TIME" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$UTC_MERGE_TIME")
-
-              # 使用 jq 按 Unicode 字符安全切片，避免截断多字节中文或 Emoji 导致 Telegram 拒收
-              MSG_LEN=$(echo "$COMMIT_DATA" | jq -r '.message | length')
-              SAFE_MESSAGE=$(echo "$COMMIT_DATA" | jq -r '.message[0:1500]')
-              if [ "$MSG_LEN" -gt 1500 ]; then
-                SAFE_MESSAGE="${SAFE_MESSAGE}...(内容过长已截断)"
-              fi
-
-              ESCAPED_MESSAGE=$(escape_html "$SAFE_MESSAGE")
-              ESCAPED_AUTHOR=$(escape_html "$AUTHOR")
-
-              TEXT=$(cat <<EOF
-$TAG_LABEL
-
-📦 <b>仓库:</b> <code>$TARGET_REPO</code>
-👤 <b>提交者:</b> <code>$ESCAPED_AUTHOR</code>
-⏰ <b>合并时间(北京):</b> <code>$BEIJING_MERGE_TIME</code>
-🔗 <b>详情:</b> <a href="$URL">查看 Commit ($SHORT_SHA)</a>
-
-📝 <b>变动内容:</b>
-<code>$ESCAPED_MESSAGE</code>
-EOF
-              )
-
-              send_telegram "$TEXT"
+            local NEW_COUNT=${#NEW_COMMITS[@]}
+            for (( i=NEW_COUNT-1; i>=0; i-- )); do
+              process_single_commit "$TARGET_REPO" "$REPO_CLASS" "${NEW_COMMITS[$i]}"
             done
           }
 
-          # ==============================================================================
-          # 第四层：B 类核心仓库 Releases（正式版 + 预发布版）双轨监控函数
-          # ==============================================================================
           check_repo_release() {
             local TARGET_REPO="$1"
             echo "[$TARGET_REPO] 正在检查最新 Release..."
 
-            # 使用 /releases?per_page=5 过滤掉 draft，兼顾正式版与测试网预发布版（Pre-release）
-            RELEASE_DATA=$(gh api "repos/$TARGET_REPO/releases?per_page=5" --jq '
-              [.[] | select(.draft == false)][0] // empty | {
-                tag: .tag_name,
-                name: (.name // ""),
-                prerelease: .prerelease,
-                url: .html_url,
-                published_at: .published_at,
-                body: (.body // "无发布说明")
-              }
-            ' 2>/dev/null)
+            local RELEASE_DATA=$(gh api "repos/$TARGET_REPO/releases?per_page=5" --jq '[.[] | select(.draft == false)][0] | {tag: .tag_name, name: .name, prerelease: .prerelease, url: .html_url, published_at: .published_at, body: .body}' 2>/dev/null)
 
             if [ -z "$RELEASE_DATA" ] || [ "$RELEASE_DATA" = "null" ]; then
               return
             fi
 
-            TAG_NAME=$(echo "$RELEASE_DATA" | jq -r '.tag // ""')
+            local TAG_NAME=$(printf '%s' "$RELEASE_DATA" | jq -r '.tag // ""')
             if [ -z "$TAG_NAME" ]; then
               return
             fi
 
-            REPO_FILE=$(printf '%s' "$TARGET_REPO" | tr '/' '_')
-            RELEASE_CACHE_FILE="$CACHE_DIR/${REPO_FILE}_release"
+            local REPO_FILE=$(printf '%s' "$TARGET_REPO" | tr '/' '_')
+            local RELEASE_CACHE_FILE="$CACHE_DIR/${REPO_FILE}_release"
 
+            local LAST_TAG=""
             if [ -f "$RELEASE_CACHE_FILE" ]; then
               LAST_TAG=$(cat "$RELEASE_CACHE_FILE")
-            else
-              LAST_TAG=""
             fi
 
             if [ "$TAG_NAME" = "$LAST_TAG" ]; then
@@ -246,56 +204,42 @@ EOF
               return
             fi
 
-            # 第一时间写入版本缓存
             printf '%s' "$TAG_NAME" > "$RELEASE_CACHE_FILE"
 
             echo "检测到新版本发布 ($TAG_NAME)！发送高优 Telegram 警报..."
 
-            REL_NAME=$(echo "$RELEASE_DATA" | jq -r '.name')
-            REL_URL=$(echo "$RELEASE_DATA" | jq -r '.url')
-            IS_PRE=$(echo "$RELEASE_DATA" | jq -r '.prerelease')
-            UTC_PUB_TIME=$(echo "$RELEASE_DATA" | jq -r '.published_at')
-            BEIJING_PUB_TIME=$(TZ="Asia/Shanghai" date -d "$UTC_PUB_TIME" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$UTC_PUB_TIME")
+            local REL_NAME=$(printf '%s' "$RELEASE_DATA" | jq -r '.name // ""')
+            local REL_URL=$(printf '%s' "$RELEASE_DATA" | jq -r '.url')
+            local IS_PRE=$(printf '%s' "$RELEASE_DATA" | jq -r '.prerelease')
+            local UTC_PUB_TIME=$(printf '%s' "$RELEASE_DATA" | jq -r '.published_at')
+            local BEIJING_PUB_TIME=$(TZ="Asia/Shanghai" date -d "$UTC_PUB_TIME" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || printf '%s' "$UTC_PUB_TIME")
 
-            # 使用 jq 按 Unicode 字符安全切片
-            BODY_LEN=$(echo "$RELEASE_DATA" | jq -r '.body | length')
-            SAFE_BODY=$(echo "$RELEASE_DATA" | jq -r '.body[0:1400]')
+            local SAFE_BODY=$(printf '%s' "$RELEASE_DATA" | jq -r '(.body // "无发布说明")[0:1400]')
+            local BODY_LEN=$(printf '%s' "$RELEASE_DATA" | jq -r '(.body // "") | length')
             if [ "$BODY_LEN" -gt 1400 ]; then
               SAFE_BODY="${SAFE_BODY}...(发布说明过长已截断)"
             fi
 
-            ESCAPED_TAG=$(escape_html "$TAG_NAME")
-            ESCAPED_NAME=$(escape_html "$REL_NAME")
-            ESCAPED_BODY=$(escape_html "$SAFE_BODY")
+            local ESCAPED_TAG=$(escape_html "$TAG_NAME")
+            local ESCAPED_NAME=$(escape_html "$REL_NAME")
+            local ESCAPED_BODY=$(escape_html "$SAFE_BODY")
 
-            REL_TYPE="正式版 (Mainnet/Stable)"
+            local REL_TYPE="正式版 (Mainnet/Stable)"
             if [ "$IS_PRE" = "true" ]; then
               REL_TYPE="预发布版 (Pre-release)"
             fi
 
-            TEXT=$(cat <<EOF
-🚀🚨【版本发布 / 发版双轨警报】
-
-📦 <b>仓库:</b> <code>$TARGET_REPO</code>
-🏷️ <b>版本号:</b> <code>$ESCAPED_TAG</code> ($REL_TYPE)
-📌 <b>版本标题:</b> <code>$ESCAPED_NAME</code>
-⏰ <b>发布时间(北京):</b> <code>$BEIJING_PUB_TIME</code>
-🔗 <b>发版详情:</b> <a href="$REL_URL">前往 GitHub Release</a>
-
-📋 <b>更新日志摘要:</b>
-<code>$ESCAPED_BODY</code>
-EOF
-            )
+            local TEXT
+            printf -v TEXT '🚀🚨【正式版本发布 / 发版双轨警报】\n\n📦 <b>仓库:</b> <code>%s</code>\n🏷️ <b>版本号:</b> <code>%s</code> (%s)\n📌 <b>版本标题:</b> <code>%s</code>\n⏰ <b>发布时间(北京):</b> <code>%s</code>\n🔗 <b>发版详情:</b> <a href="%s">前往 GitHub Release</a>\n\n📋 <b>更新日志摘要:</b>\n<code>%s</code>' \
+              "$TARGET_REPO" "$ESCAPED_TAG" "$REL_TYPE" "$ESCAPED_NAME" "$BEIJING_PUB_TIME" "$REL_URL" "$ESCAPED_BODY"
 
             send_telegram "$TEXT"
           }
 
-          # 1. 遍历 A 类高纯度治理与规范库
           for TARGET_REPO in "${CLASS_A_REPOS[@]}"; do
             check_repo_commits "$TARGET_REPO" "A"
           done
 
-          # 2. 遍历 B 类高频工程代码库（Commit 漏斗过滤 + Release 发版双轨）
           for TARGET_REPO in "${CLASS_B_REPOS[@]}"; do
             check_repo_commits "$TARGET_REPO" "B"
             check_repo_release "$TARGET_REPO"
