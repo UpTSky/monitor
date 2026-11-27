@@ -118,7 +118,7 @@ jobs:
             local ESCAPED_AUTHOR=$(escape_html "$AUTHOR")
 
             local TEXT
-            printf -v TEXT '%s\n\n📦 <b>仓库:</b> <code>%s</code>\n👤 <b>提交者:</b> <code>%s</code>\n⏰ <b>合并时间(北京):</b> <code>%s</code>\n🔗 <b>详情:</b> <a href="%s">查看 Commit (%s)</a>\n\n📝 <b>变动内容:</b>\n<code>%s</code>' \
+            printf -v TEXT '%s\n\n📦 <b>仓库:</b> <code>%s</code>\n👤 <b>提交者:</b> <code>%s</code>\n🕒 <b>合并时间(北京):</b> <code>%s</code>\n🔗 <b>详情:</b> <a href="%s">查看 Commit (%s)</a>\n\n📝 <b>变动内容:</b>\n<code>%s</code>' \
               "$TAG_LABEL" "$TARGET_REPO" "$ESCAPED_AUTHOR" "$BEIJING_MERGE_TIME" "$URL" "$SHORT_SHA" "$ESCAPED_MESSAGE"
 
             send_telegram "$TEXT"
@@ -200,7 +200,7 @@ jobs:
             fi
 
             if [ "$TAG_NAME" = "$LAST_TAG" ]; then
-              echo "版本未变动 ($TAG_NAME)，跳过..."
+              echo "版本未变动 ($TAG_NAME)，跳过。"
               return
             fi
 
@@ -230,7 +230,7 @@ jobs:
             fi
 
             local TEXT
-            printf -v TEXT '🚀🚨【正式版本发布 / 发版双轨警报】\n\n📦 <b>仓库:</b> <code>%s</code>\n🏷️ <b>版本号:</b> <code>%s</code> (%s)\n📌 <b>版本标题:</b> <code>%s</code>\n⏰ <b>发布时间(北京):</b> <code>%s</code>\n🔗 <b>发版详情:</b> <a href="%s">前往 GitHub Release</a>\n\n📋 <b>更新日志摘要:</b>\n<code>%s</code>' \
+            printf -v TEXT '🚀🚨【正式版本发布 / 发版双轨警报】\n\n📦 <b>仓库:</b> <code>%s</code>\n🏷️ <b>版本号:</b> <code>%s</code> (%s)\n📌 <b>版本标题:</b> <code>%s</code>\n🕒 <b>发布时间(北京):</b> <code>%s</code>\n🔗 <b>发版详情:</b> <a href="%s">前往 GitHub Release</a>\n\n📋 <b>更新日志摘要:</b>\n<code>%s</code>' \
               "$TARGET_REPO" "$ESCAPED_TAG" "$REL_TYPE" "$ESCAPED_NAME" "$BEIJING_PUB_TIME" "$REL_URL" "$ESCAPED_BODY"
 
             send_telegram "$TEXT"
