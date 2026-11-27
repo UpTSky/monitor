@@ -109,9 +109,9 @@ jobs:
             local UTC_MERGE_TIME=$(printf '%s' "$COMMIT_DATA" | jq -r '.merge_date')
             local BEIJING_MERGE_TIME=$(TZ="Asia/Shanghai" date -d "$UTC_MERGE_TIME" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || printf '%s' "$UTC_MERGE_TIME")
 
-            local SAFE_MESSAGE=$(printf '%s' "$COMMIT_DATA" | jq -r '.message[0:1500]')
+            local SAFE_MESSAGE=$(printf '%s' "$COMMIT_DATA" | jq -r '.message[0:3600]')
             local MSG_LEN=$(printf '%s' "$COMMIT_DATA" | jq -r '.message | length')
-            if [ "$MSG_LEN" -gt 1500 ]; then
+            if [ "$MSG_LEN" -gt 3600 ]; then
               SAFE_MESSAGE="${SAFE_MESSAGE}...(内容过长已截断)"
             fi
             local ESCAPED_MESSAGE=$(escape_html "$SAFE_MESSAGE")
@@ -200,7 +200,7 @@ jobs:
             fi
 
             if [ "$TAG_NAME" = "$LAST_TAG" ]; then
-              echo "版本未变动 ($TAG_NAME)，跳过。"
+              echo "版本未变动 ($TAG_NAME)，跳过..."
               return
             fi
 
