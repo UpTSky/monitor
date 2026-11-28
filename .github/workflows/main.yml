@@ -79,30 +79,23 @@ jobs:
             local LOGIN=$(printf '%s' "$COMMIT_DATA" | jq -r '.login // ""')
             local AUTHOR_LOWER=$(printf '%s %s' "$AUTHOR" "$LOGIN" | tr '[:upper:]' '[:lower:]')
 
-            local TAG_LABEL=""
-
-            if [ "$REPO_CLASS" = "A" ]; then
-              TAG_LABEL="🏛️【治理与协议规范】"
-            else
+            if [ "$REPO_CLASS" != "A" ]; then
               if printf '%s' "$AUTHOR_LOWER" | grep -Eq '(dependabot|renovate|github-actions|mergify)\[bot\]|^dependabot$|^renovate$'; then
                 echo "已过滤机器人提交 ($AUTHOR): $FIRST_LINE"
                 return
               fi
 
               local WHITELIST_REGEX='(release|mainnet|hardfork|hard-fork|hard fork|activation|upgrade|epoch|protocol[ _-]?version|emission|tokenomics|fee|burn|staking|reward|slash|governance|compliance|freeze|(^|[^a-z0-9])(eip|sip|cip|nep|bip)-[0-9]+)'
-              if printf '%s' "$FIRST_LINE_LOWER" | grep -Eq "$WHITELIST_REGEX"; then
-                TAG_LABEL="🚨【核心升级/经济变动】"
-              else
+              if ! printf '%s' "$FIRST_LINE_LOWER" | grep -Eq "$WHITELIST_REGEX"; then
                 local BLACKLIST_REGEX='^(docs?|tests?|ci|build|style|lint|refactor|chore\((deps|ci|infra)\)|fix\((rpc|test|prune|provider)\))([(:!]|$)'
                 if printf '%s' "$FIRST_LINE_LOWER" | grep -Eq "$BLACKLIST_REGEX"; then
                   echo "已过滤工程噪音提交: $FIRST_LINE"
                   return
                 fi
-                TAG_LABEL="📌【常规功能迭代】"
               fi
             fi
 
-            echo "命中推送规则 ($TAG_LABEL)！发送 Telegram 通知..."
+            echo "命中推送规则！发送 Telegram 通知..."
 
             local SHORT_SHA=${SHA:0:7}
             local URL=$(printf '%s' "$COMMIT_DATA" | jq -r '.url')
@@ -118,8 +111,8 @@ jobs:
             local ESCAPED_AUTHOR=$(escape_html "$AUTHOR")
 
             local TEXT
-            printf -v TEXT '%s\n\n📦 <b>仓库:</b> <code>%s</code>\n👤 <b>提交者:</b> <code>%s</code>\n🕒 <b>合并时间(北京):</b> <code>%s</code>\n🔗 <b>详情:</b> <a href="%s">查看 Commit (%s)</a>\n\n📝 <b>变动内容:</b>\n<code>%s</code>' \
-              "$TAG_LABEL" "$TARGET_REPO" "$ESCAPED_AUTHOR" "$BEIJING_MERGE_TIME" "$URL" "$SHORT_SHA" "$ESCAPED_MESSAGE"
+            printf -v TEXT '📦 <b>仓库:</b> <code>%s</code>\n👤 <b>提交者:</b> <code>%s</code>\n🕒 <b>合并时间(北京):</b> <code>%s</code>\n🔗 <b>详情:</b> <a href="%s">查看 Commit (%s)</a>\n\n📝 <b>变动内容:</b>\n<pre>%s</pre>' \
+              "$TARGET_REPO" "$ESCAPED_AUTHOR" "$BEIJING_MERGE_TIME" "$URL" "$SHORT_SHA" "$ESCAPED_MESSAGE"
 
             send_telegram "$TEXT"
           }
@@ -230,7 +223,7 @@ jobs:
             fi
 
             local TEXT
-            printf -v TEXT '🚀🚨【正式版本发布 / 发版双轨警报】\n\n📦 <b>仓库:</b> <code>%s</code>\n🏷️ <b>版本号:</b> <code>%s</code> (%s)\n📌 <b>版本标题:</b> <code>%s</code>\n🕒 <b>发布时间(北京):</b> <code>%s</code>\n🔗 <b>发版详情:</b> <a href="%s">前往 GitHub Release</a>\n\n📋 <b>更新日志摘要:</b>\n<code>%s</code>' \
+            printf -v TEXT '🚀🚨【正式版本发布 / 发版双轨警报】\n\n📦 <b>仓库:</b> <code>%s</code>\n🏷️ <b>版本号:</b> <code>%s</code> (%s)\n📌 <b>版本标题:</b> <code>%s</code>\n🕒 <b>发布时间(北京):</b> <code>%s</code>\n🔗 <b>发版详情:</b> <a href="%s">前往 GitHub Release</a>\n\n📋 <b>更新日志摘要:</b>\n<pre>%s</pre>' \
               "$TARGET_REPO" "$ESCAPED_TAG" "$REL_TYPE" "$ESCAPED_NAME" "$BEIJING_PUB_TIME" "$REL_URL" "$ESCAPED_BODY"
 
             send_telegram "$TEXT"
